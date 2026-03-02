@@ -2095,10 +2095,14 @@ export default function App() {
     localStorage.setItem(`swb_locked_${LOGIN_NAME}`, isLocked ? "1" : "0");
   }, [isLocked]);
 
-  // ─── Save counter — every pending save increments this; polls only run when 0 ─
+  // ─── Save tracking ────────────────────────────────────────────────────────────
+  // Every pending save increments this; polls only run when 0
   const pendingSaveCount = useRef(0);
-  // Timestamp (ms) of the last save that completed — polls skip if a save just finished
-  const lastSaveCompletedAt = useRef(0);
+  // The exact encoded lastUpdated string we last wrote to the backend.
+  // During polling we compare the remote value against this — if they match
+  // it means we are reading back our own write, so we skip applying UI state
+  // (to avoid a race where our own write hasn't flushed yet).
+  const lastSavedEncodedRef = useRef<string | null>(null);
   // Refs to always have the latest UI state available in callbacks
   const selectedSectionRef = useRef<Record<string, string>>({});
   const selectedWeekRef = useRef<number | null>(null);
@@ -2126,6 +2130,9 @@ export default function App() {
         selectedSectionRef.current,
         selectedWeekRef.current,
       );
+      // Optimistically mark this as our own latest save so the poller
+      // can recognise and skip re-applying our own write.
+      lastSavedEncodedRef.current = encoded;
       actor
         .saveAllStaffingCards(
           cards.map((c) => ({
@@ -2143,11 +2150,9 @@ export default function App() {
         .then(() => actor.setLastUpdated(encoded))
         .then(() => {
           pendingSaveCount.current = Math.max(0, pendingSaveCount.current - 1);
-          lastSaveCompletedAt.current = Date.now();
         })
         .catch(() => {
           pendingSaveCount.current = Math.max(0, pendingSaveCount.current - 1);
-          lastSaveCompletedAt.current = Date.now();
           toast.warning("Saved locally.", { id: "save-warn", duration: 2500 });
         });
     },
@@ -2170,6 +2175,7 @@ export default function App() {
         selectedSectionRef.current,
         selectedWeekRef.current,
       );
+      lastSavedEncodedRef.current = encoded;
       actor
         .saveAllUniversityCards(
           cards.map((c) => ({
@@ -2188,33 +2194,34 @@ export default function App() {
         .then(() => actor.setLastUpdated(encoded))
         .then(() => {
           pendingSaveCount.current = Math.max(0, pendingSaveCount.current - 1);
-          lastSaveCompletedAt.current = Date.now();
         })
         .catch(() => {
           pendingSaveCount.current = Math.max(0, pendingSaveCount.current - 1);
-          lastSaveCompletedAt.current = Date.now();
           toast.warning("Saved locally.", { id: "save-warn", duration: 2500 });
         });
     },
     [actor],
   );
 
-  // Save only UI state (selectedSection / selectedWeek) to the backend
+  // Save only UI state (selectedSection / selectedWeek) to the backend.
+  // Also updates the visible lastUpdated timestamp so other devices can
+  // detect the change during their next poll.
   const saveUIState = useCallback(
     (sel: Record<string, string>, week: number | null) => {
       if (!actor) return;
       const stamp = nowStamp();
+      setLastUpdated(stamp);
+      localStorage.setItem("swb_lastUpdated", stamp);
       const encoded = encodeLastUpdated(stamp, sel, week);
+      lastSavedEncodedRef.current = encoded;
       pendingSaveCount.current += 1;
       actor
         .setLastUpdated(encoded)
         .then(() => {
           pendingSaveCount.current = Math.max(0, pendingSaveCount.current - 1);
-          lastSaveCompletedAt.current = Date.now();
         })
         .catch(() => {
           pendingSaveCount.current = Math.max(0, pendingSaveCount.current - 1);
-          lastSaveCompletedAt.current = Date.now();
         });
     },
     [actor],
@@ -2226,9 +2233,6 @@ export default function App() {
     // Skip poll if a save is still in-flight — the save will complete with the
     // latest data so there's no point in fetching now.
     if (pendingSaveCount.current > 0) return;
-    // Also skip if a save just completed within the last 3 seconds to avoid
-    // immediately overwriting our own fresh save with stale data.
-    if (Date.now() - lastSaveCompletedAt.current < 3000) return;
 
     try {
       const [rawStaff, rawUni, lu] = await Promise.all([
@@ -2286,9 +2290,12 @@ export default function App() {
         const env = decodeLastUpdated(lu);
         setLastUpdated(env.ts || lu);
         localStorage.setItem("swb_lastUpdated", env.ts || lu);
-        // Apply UI state from remote only if it came from another device
-        // (we skip if a save just completed — our own state is canonical)
-        if (Date.now() - lastSaveCompletedAt.current >= 3000) {
+
+        // Apply UI state (toggle selections) from remote UNLESS this is
+        // exactly the value we last wrote ourselves — in that case our local
+        // state is already up-to-date and we must not overwrite it.
+        const isOwnWrite = lu === lastSavedEncodedRef.current;
+        if (!isOwnWrite) {
           setSelectedSection(env.sel ?? {});
           setSelectedWeek(env.week ?? null);
           selectedSectionRef.current = env.sel ?? {};
