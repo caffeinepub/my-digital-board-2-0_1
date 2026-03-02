@@ -64,23 +64,24 @@ interface ColConfig {
 
 const STAFFING_COLS: ColConfig[] = [
   {
-    key: "pg",
-    title: "Process Guide",
+    key: "stow",
+    title: "STOW",
     sections: [
-      { key: "pg_stow", title: "Stow" },
-      { key: "pg_pick", title: "Pick" },
+      { key: "stow_decanter", title: "Decanter/Process Guide" },
+      { key: "stow_pallet_auditor", title: "Pallet Auditor" },
+      { key: "stow_downstacker", title: "Downstacker" },
+      { key: "stow_stower", title: "Stower (To Stow)" },
+      { key: "stow_transporter", title: "Stow Transporter" },
     ],
   },
   {
-    key: "ipf",
-    title: "In Path Function",
+    key: "pick",
+    title: "PICK",
     sections: [
-      { key: "ipf_down", title: "Downstacker" },
-      { key: "ipf_stow", title: "Stower" },
-      { key: "ipf_pick", title: "Picker" },
-      { key: "ipf_trans", title: "Transporter (Stow or Pick)" },
-      { key: "ipf_qxy2_ps", title: "QXY2 Problem Solve" },
-      { key: "ipf_icqa_iol", title: "ICQA IOL" },
+      { key: "pick_pg_loading", title: "Process Guide/Loading Picks" },
+      { key: "pick_pallet_transfer", title: "8ft-6ft Pallet Transfer" },
+      { key: "pick_picker", title: "Picker (To Pick)" },
+      { key: "pick_transporter", title: "Pick Transporter" },
     ],
   },
   {
@@ -90,6 +91,15 @@ const STAFFING_COLS: ColConfig[] = [
       { key: "ls_in_ps", title: "XLX7 Inbound Problem Solve" },
       { key: "ls_out_ps", title: "XLX7 Outbound Problem Solve" },
       { key: "ls_ws", title: "XLX7 WaterSpider" },
+    ],
+  },
+  {
+    key: "ps",
+    title: "PS",
+    sections: [
+      { key: "ps_qxy2", title: "QXY2 Problem Solve" },
+      { key: "ps_icqa_iol", title: "ICQA IOL" },
+      { key: "ps_icqa_bin", title: "ICQA Bin Counter" },
     ],
   },
   {
@@ -152,25 +162,52 @@ const liveClockStr = () =>
 
 function migrateStaffingCol(oldCol: string): string {
   const validKeys = new Set([
-    "pg_stow",
-    "pg_pick",
-    "ipf_down",
-    "ipf_stow",
-    "ipf_pick",
-    "ipf_trans",
-    "ipf_qxy2_ps",
-    "ipf_icqa_iol",
+    // STOW column sections
+    "stow_decanter",
+    "stow_pallet_auditor",
+    "stow_downstacker",
+    "stow_stower",
+    "stow_transporter",
+    // PICK column sections
+    "pick_pg_loading",
+    "pick_pallet_transfer",
+    "pick_picker",
+    "pick_transporter",
+    // LaborShare sections
     "ls_in_ps",
     "ls_out_ps",
     "ls_ws",
+    // PS sections
+    "ps_qxy2",
+    "ps_icqa_iol",
+    "ps_icqa_bin",
+    // Expected Employee
     "staff_na",
   ]);
   if (validKeys.has(oldCol)) return oldCol;
-  if (oldCol === "ps_qxy2") return "ipf_qxy2_ps";
-  if (oldCol === "ps_iol") return "ipf_icqa_iol";
-  if (oldCol === "ps_xlx7") return "ls_in_ps";
+
+  // Old Process Guide sections → STOW
+  if (oldCol === "pg_stow") return "stow_stower";
+  if (oldCol === "pg_pick") return "pick_picker";
+
+  // Old In Path Function sections → nearest STOW/PICK equivalent
+  if (oldCol === "ipf_down") return "stow_downstacker";
+  if (oldCol === "ipf_stow") return "stow_stower";
+  if (oldCol === "ipf_pick") return "pick_picker";
+  if (oldCol === "ipf_trans") return "stow_transporter";
+
+  // Old IPF problem solve sections → PS column
+  if (oldCol === "ipf_qxy2_ps") return "ps_qxy2";
+  if (oldCol === "ipf_icqa_iol") return "ps_icqa_iol";
+
+  // Old LaborShare keys
   if (oldCol === "ls_in") return "ls_in_ps";
   if (oldCol === "ls_out") return "ls_out_ps";
+
+  // Old PS column keys
+  if (oldCol === "ps_iol") return "ps_icqa_iol";
+  if (oldCol === "ps_xlx7") return "ls_in_ps";
+
   return "staff_na";
 }
 
@@ -239,6 +276,35 @@ function normalizeSnhuCards(
   return cards
     .filter((c) => c && !defaultIds.has(c.id))
     .map((c) => ({ ...c, col: migrateSnhuCol(c.col) }));
+}
+
+// ─── UI State Encoding ────────────────────────────────────────────────────────
+// We piggyback UI state (selected section / week) onto the lastUpdated backend
+// field as a JSON envelope so it syncs cross-device without new backend APIs.
+
+interface UIStateEnvelope {
+  ts: string;
+  sel: Record<string, string>;
+  week: number | null;
+}
+
+function encodeLastUpdated(
+  ts: string,
+  sel: Record<string, string>,
+  week: number | null,
+): string {
+  const env: UIStateEnvelope = { ts, sel, week };
+  return JSON.stringify(env);
+}
+
+function decodeLastUpdated(raw: string): UIStateEnvelope {
+  try {
+    const parsed = JSON.parse(raw) as UIStateEnvelope;
+    if (parsed && typeof parsed.ts === "string") return parsed;
+  } catch {
+    // plain string timestamp (legacy)
+  }
+  return { ts: raw, sel: {}, week: null };
 }
 
 // ─── TopBar ───────────────────────────────────────────────────────────────────
@@ -1291,6 +1357,8 @@ interface StaffingBoardProps {
   onStatusToggle: (cardId: string) => void;
   miguelPhoto: string | null;
   onMiguelPhotoChange: (dataUrl: string) => void;
+  selectedSection: Record<string, string>;
+  onSelectedSectionChange: (next: Record<string, string>) => void;
 }
 
 function StaffingBoard({
@@ -1300,6 +1368,8 @@ function StaffingBoard({
   onStatusToggle,
   miguelPhoto,
   onMiguelPhotoChange,
+  selectedSection,
+  onSelectedSectionChange,
 }: StaffingBoardProps) {
   const [dragOverId, setDragOverId] = useState<string | null>(null);
 
@@ -1345,13 +1415,25 @@ function StaffingBoard({
     setDragOverId(null);
   }
 
+  const selectStyle: React.CSSProperties = {
+    width: "100%",
+    background: "rgba(255,255,255,0.06)",
+    border: "1px solid rgba(255,255,255,0.12)",
+    color: "rgba(255,255,255,0.92)",
+    borderRadius: 12,
+    padding: "10px 12px",
+    fontSize: 14,
+    outline: "none",
+    cursor: "pointer",
+  };
+
   return (
     <>
       <div
         className="board-grid mt-3"
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(4, 1fr)",
+          gridTemplateColumns: "repeat(5, 1fr)",
           gap: 12,
         }}
       >
@@ -1362,6 +1444,11 @@ function StaffingBoard({
                 0,
               )
             : (buckets[col.dropKey ?? ""]?.length ?? 0);
+
+          const activeSectionKey = selectedSection[col.key] ?? "";
+          const activeSection = col.sections?.find(
+            (s) => s.key === activeSectionKey,
+          );
 
           return (
             <div
@@ -1392,31 +1479,56 @@ function StaffingBoard({
                 style={{ padding: 12 }}
               >
                 {col.sections ? (
-                  col.sections.map((sec) => (
-                    <DropBucket
-                      key={sec.key}
-                      bucketKey={sec.key}
-                      label={sec.title}
-                      count={buckets[sec.key]?.length ?? 0}
-                      dragOverId={dragOverId}
-                      isLocked={isLocked}
-                      onDragOver={onDragOver}
-                      onDrop={onDrop}
-                      onDragLeave={() => setDragOverId(null)}
+                  <>
+                    {/* Section select toggle — styled like the board toggle */}
+                    <select
+                      value={activeSectionKey}
+                      onChange={(e) =>
+                        onSelectedSectionChange({
+                          ...selectedSection,
+                          [col.key]: e.target.value,
+                        })
+                      }
+                      style={selectStyle}
+                      data-ocid={`staffing.${col.key}.section.select`}
                     >
-                      {(buckets[sec.key] ?? []).map((card) => (
-                        <StaffingCardView
-                          key={card.id}
-                          card={card}
-                          isLocked={isLocked}
-                          onDragStart={onDragStart}
-                          miguelPhoto={miguelPhoto}
-                          onMiguelPhotoChange={onMiguelPhotoChange}
-                          onStatusToggle={onStatusToggle}
-                        />
+                      <option value="" />
+                      {col.sections.map((sec) => (
+                        <option key={sec.key} value={sec.key}>
+                          {sec.title}
+                          {(buckets[sec.key]?.length ?? 0) > 0
+                            ? ` (${buckets[sec.key].length})`
+                            : ""}
+                        </option>
                       ))}
-                    </DropBucket>
-                  ))
+                    </select>
+
+                    {/* Show the selected section's drop bucket */}
+                    {activeSection && (
+                      <DropBucket
+                        bucketKey={activeSection.key}
+                        label={activeSection.title}
+                        count={buckets[activeSection.key]?.length ?? 0}
+                        dragOverId={dragOverId}
+                        isLocked={isLocked}
+                        onDragOver={onDragOver}
+                        onDrop={onDrop}
+                        onDragLeave={() => setDragOverId(null)}
+                      >
+                        {(buckets[activeSection.key] ?? []).map((card) => (
+                          <StaffingCardView
+                            key={card.id}
+                            card={card}
+                            isLocked={isLocked}
+                            onDragStart={onDragStart}
+                            miguelPhoto={miguelPhoto}
+                            onMiguelPhotoChange={onMiguelPhotoChange}
+                            onStatusToggle={onStatusToggle}
+                          />
+                        ))}
+                      </DropBucket>
+                    )}
+                  </>
                 ) : (
                   <DropBucket
                     bucketKey={col.dropKey!}
@@ -1463,6 +1575,8 @@ interface SnhuBoardProps {
     card: Omit<LocalUniversityCard, "id" | "createdAt" | "col" | "createdBy">,
   ) => void;
   onDelete: (cardId: string) => void;
+  selectedWeek: number | null;
+  onSelectedWeekChange: (week: number | null) => void;
 }
 
 function SnhuBoard({
@@ -1472,12 +1586,13 @@ function SnhuBoard({
   onAdd,
   onAddAssignment,
   onDelete,
+  selectedWeek,
+  onSelectedWeekChange,
 }: SnhuBoardProps) {
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [addAssignOpen, setAddAssignOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [selectedWeek, setSelectedWeek] = useState<number | null>(null);
 
   const buckets = useMemo(() => {
     const m: Record<string, LocalUniversityCard[]> = {
@@ -1676,7 +1791,7 @@ function SnhuBoard({
                     <select
                       value={selectedWeek ?? ""}
                       onChange={(e) =>
-                        setSelectedWeek(
+                        onSelectedWeekChange(
                           e.target.value ? Number(e.target.value) : null,
                         )
                       }
@@ -1692,7 +1807,7 @@ function SnhuBoard({
                         cursor: "pointer",
                       }}
                     >
-                      <option value="">Select Week</option>
+                      <option value="" />
                       {WEEK_NUMS.map((w) => (
                         <option key={w} value={w}>
                           Week {w}
@@ -1797,6 +1912,12 @@ export default function App() {
   const [universityCards, setUniversityCards] = useState<LocalUniversityCard[]>(
     [],
   );
+  // UI state — synced cross-device via backend lastUpdated field
+  const [selectedSection, setSelectedSection] = useState<
+    Record<string, string>
+  >({});
+  const [selectedWeek, setSelectedWeek] = useState<number | null>(null);
+
   const [miguelPhoto, setMiguelPhoto] = useState<string | null>(() => {
     try {
       return localStorage.getItem(MIGUEL_PHOTO_KEY);
@@ -1906,8 +2027,18 @@ export default function App() {
         );
 
         if (lu) {
-          setLastUpdated(lu);
-          localStorage.setItem("swb_lastUpdated", lu);
+          const env = decodeLastUpdated(lu);
+          setLastUpdated(env.ts || lu);
+          localStorage.setItem("swb_lastUpdated", env.ts || lu);
+          // Restore UI state from backend on initial load
+          if (env.sel && Object.keys(env.sel).length > 0) {
+            setSelectedSection(env.sel);
+            selectedSectionRef.current = env.sel;
+          }
+          if (env.week !== null && env.week !== undefined) {
+            setSelectedWeek(env.week);
+            selectedWeekRef.current = env.week;
+          }
         }
 
         // Sync latest data into localStorage for offline fallback
@@ -1964,21 +2095,37 @@ export default function App() {
     localStorage.setItem(`swb_locked_${LOGIN_NAME}`, isLocked ? "1" : "0");
   }, [isLocked]);
 
-  // ─── isSaving ref — prevents polling from overwriting in-progress saves ────
-  const isSaving = useRef(false);
+  // ─── Save counter — every pending save increments this; polls only run when 0 ─
+  const pendingSaveCount = useRef(0);
+  // Timestamp (ms) of the last save that completed — polls skip if a save just finished
+  const lastSaveCompletedAt = useRef(0);
+  // Refs to always have the latest UI state available in callbacks
+  const selectedSectionRef = useRef<Record<string, string>>({});
+  const selectedWeekRef = useRef<number | null>(null);
+  useEffect(() => {
+    selectedSectionRef.current = selectedSection;
+  }, [selectedSection]);
+  useEffect(() => {
+    selectedWeekRef.current = selectedWeek;
+  }, [selectedWeek]);
 
-  // Save helpers — localStorage is primary (immediate), backend is fire-and-forget
+  // Save helpers — localStorage is primary (immediate), backend is awaited
   const saveStaffing = useCallback(
     (cards: LocalStaffingCard[]) => {
-      // 1. Persist to localStorage immediately — this is the source of truth
+      // 1. Persist to localStorage immediately — guarantees local persistence
       localStorage.setItem(LS_STAFFING_KEY, JSON.stringify(cards));
       const stamp = nowStamp();
       setLastUpdated(stamp);
       localStorage.setItem("swb_lastUpdated", stamp);
 
-      // 2. Fire-and-forget backend sync (no loading toast, no rollback on failure)
+      // 2. Save to backend — increment counter so polls wait
       if (!actor) return;
-      isSaving.current = true;
+      pendingSaveCount.current += 1;
+      const encoded = encodeLastUpdated(
+        stamp,
+        selectedSectionRef.current,
+        selectedWeekRef.current,
+      );
       actor
         .saveAllStaffingCards(
           cards.map((c) => ({
@@ -1993,12 +2140,14 @@ export default function App() {
             status: c.status ?? "OUT",
           })),
         )
+        .then(() => actor.setLastUpdated(encoded))
         .then(() => {
-          isSaving.current = false;
-          return actor.setLastUpdated(stamp);
+          pendingSaveCount.current = Math.max(0, pendingSaveCount.current - 1);
+          lastSaveCompletedAt.current = Date.now();
         })
         .catch(() => {
-          isSaving.current = false;
+          pendingSaveCount.current = Math.max(0, pendingSaveCount.current - 1);
+          lastSaveCompletedAt.current = Date.now();
           toast.warning("Saved locally.", { id: "save-warn", duration: 2500 });
         });
     },
@@ -2007,15 +2156,20 @@ export default function App() {
 
   const saveUniversity = useCallback(
     (cards: LocalUniversityCard[]) => {
-      // 1. Persist to localStorage immediately — this is the source of truth
+      // 1. Persist to localStorage immediately — guarantees local persistence
       localStorage.setItem(LS_UNIVERSITY_KEY, JSON.stringify(cards));
       const stamp = nowStamp();
       setLastUpdated(stamp);
       localStorage.setItem("swb_lastUpdated", stamp);
 
-      // 2. Fire-and-forget backend sync (no loading toast, no rollback on failure)
+      // 2. Save to backend — increment counter so polls wait
       if (!actor) return;
-      isSaving.current = true;
+      pendingSaveCount.current += 1;
+      const encoded = encodeLastUpdated(
+        stamp,
+        selectedSectionRef.current,
+        selectedWeekRef.current,
+      );
       actor
         .saveAllUniversityCards(
           cards.map((c) => ({
@@ -2031,13 +2185,36 @@ export default function App() {
             week: c.week !== undefined ? String(c.week) : "0",
           })),
         )
+        .then(() => actor.setLastUpdated(encoded))
         .then(() => {
-          isSaving.current = false;
-          return actor.setLastUpdated(stamp);
+          pendingSaveCount.current = Math.max(0, pendingSaveCount.current - 1);
+          lastSaveCompletedAt.current = Date.now();
         })
         .catch(() => {
-          isSaving.current = false;
+          pendingSaveCount.current = Math.max(0, pendingSaveCount.current - 1);
+          lastSaveCompletedAt.current = Date.now();
           toast.warning("Saved locally.", { id: "save-warn", duration: 2500 });
+        });
+    },
+    [actor],
+  );
+
+  // Save only UI state (selectedSection / selectedWeek) to the backend
+  const saveUIState = useCallback(
+    (sel: Record<string, string>, week: number | null) => {
+      if (!actor) return;
+      const stamp = nowStamp();
+      const encoded = encodeLastUpdated(stamp, sel, week);
+      pendingSaveCount.current += 1;
+      actor
+        .setLastUpdated(encoded)
+        .then(() => {
+          pendingSaveCount.current = Math.max(0, pendingSaveCount.current - 1);
+          lastSaveCompletedAt.current = Date.now();
+        })
+        .catch(() => {
+          pendingSaveCount.current = Math.max(0, pendingSaveCount.current - 1);
+          lastSaveCompletedAt.current = Date.now();
         });
     },
     [actor],
@@ -2045,13 +2222,23 @@ export default function App() {
 
   // ─── Background polling for cross-device sync ────────────────────────────────
   const fetchAndMerge = useCallback(async () => {
-    if (!actor || isSaving.current) return;
+    if (!actor) return;
+    // Skip poll if a save is still in-flight — the save will complete with the
+    // latest data so there's no point in fetching now.
+    if (pendingSaveCount.current > 0) return;
+    // Also skip if a save just completed within the last 3 seconds to avoid
+    // immediately overwriting our own fresh save with stale data.
+    if (Date.now() - lastSaveCompletedAt.current < 3000) return;
+
     try {
       const [rawStaff, rawUni, lu] = await Promise.all([
         actor.getAllStaffingCards(),
         actor.getAllUniversityCards(),
         actor.getLastUpdated(),
       ]);
+
+      // Bail out if a save started while we were fetching
+      if (pendingSaveCount.current > 0) return;
 
       const sCards: LocalStaffingCard[] = rawStaff.map((c) => {
         const id = decodeId(c.id);
@@ -2096,8 +2283,17 @@ export default function App() {
       localStorage.setItem(LS_UNIVERSITY_KEY, JSON.stringify(uCards));
 
       if (lu) {
-        setLastUpdated(lu);
-        localStorage.setItem("swb_lastUpdated", lu);
+        const env = decodeLastUpdated(lu);
+        setLastUpdated(env.ts || lu);
+        localStorage.setItem("swb_lastUpdated", env.ts || lu);
+        // Apply UI state from remote only if it came from another device
+        // (we skip if a save just completed — our own state is canonical)
+        if (Date.now() - lastSaveCompletedAt.current >= 3000) {
+          setSelectedSection(env.sel ?? {});
+          setSelectedWeek(env.week ?? null);
+          selectedSectionRef.current = env.sel ?? {};
+          selectedWeekRef.current = env.week ?? null;
+        }
       }
     } catch {
       // Silent fail — offline or transient error
@@ -2107,15 +2303,16 @@ export default function App() {
   useEffect(() => {
     if (!loaded || !actor) return;
 
-    // Poll every 10 seconds
-    const interval = setInterval(fetchAndMerge, 10_000);
+    // Poll every 5 seconds for fast cross-device sync
+    const interval = setInterval(fetchAndMerge, 5_000);
 
-    // Re-fetch on window focus (other device may have made changes)
-    window.addEventListener("focus", fetchAndMerge);
+    // Re-fetch immediately when user switches back to this tab
+    const onFocus = () => fetchAndMerge();
+    window.addEventListener("focus", onFocus);
 
     return () => {
       clearInterval(interval);
-      window.removeEventListener("focus", fetchAndMerge);
+      window.removeEventListener("focus", onFocus);
     };
   }, [loaded, actor, fetchAndMerge]);
 
@@ -2188,6 +2385,18 @@ export default function App() {
     setUniversityCards(next);
     toast.success("Course deleted.");
     saveUniversity(next);
+  }
+
+  function handleSelectedSectionChange(next: Record<string, string>) {
+    setSelectedSection(next);
+    selectedSectionRef.current = next;
+    saveUIState(next, selectedWeekRef.current);
+  }
+
+  function handleSelectedWeekChange(week: number | null) {
+    setSelectedWeek(week);
+    selectedWeekRef.current = week;
+    saveUIState(selectedSectionRef.current, week);
   }
 
   function handleLock() {
@@ -2263,6 +2472,8 @@ export default function App() {
               onStatusToggle={handleStaffingStatusToggle}
               miguelPhoto={miguelPhoto}
               onMiguelPhotoChange={handleMiguelPhotoChange}
+              selectedSection={selectedSection}
+              onSelectedSectionChange={handleSelectedSectionChange}
             />
           ) : (
             <SnhuBoard
@@ -2272,6 +2483,8 @@ export default function App() {
               onAdd={handleUniversityAdd}
               onAddAssignment={handleUniversityAddAssignment}
               onDelete={handleUniversityDelete}
+              selectedWeek={selectedWeek}
+              onSelectedWeekChange={handleSelectedWeekChange}
             />
           )}
         </main>
