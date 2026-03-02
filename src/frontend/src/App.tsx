@@ -31,6 +31,7 @@ interface LocalStaffingCard {
   col: string;
   createdBy: string;
   createdAt: string;
+  status?: "IN" | "OUT";
 }
 
 interface LocalUniversityCard {
@@ -91,7 +92,12 @@ const STAFFING_COLS: ColConfig[] = [
       { key: "ls_ws", title: "XLX7 WaterSpider" },
     ],
   },
-  { key: "na", title: "Not Assigned", sections: null, dropKey: "staff_na" },
+  {
+    key: "na",
+    title: "Expected Employee",
+    sections: null,
+    dropKey: "staff_na",
+  },
 ];
 
 const SNHU_COLS: ColConfig[] = [
@@ -100,14 +106,16 @@ const SNHU_COLS: ColConfig[] = [
   {
     key: "ca",
     title: "Current Assignments",
-    sections: [
-      { key: "ca_not_started", title: "Not Started" },
-      { key: "ca_in_progress", title: "In Progress" },
-    ],
+    sections: null,
+    dropKey: "ca_general",
   },
 ];
 
-const WEEK_KEYS = [1, 2, 3, 4, 5, 6, 7, 8].map((w) => `ca_week_${w}`);
+// Each week has two sub-buckets: not_started and in_progress
+const WEEK_NUMS = [1, 2, 3, 4, 5, 6, 7, 8];
+const WEEK_KEYS = WEEK_NUMS.map((w) => `ca_week_${w}`);
+const weekNotStartedKey = (w: number) => `ca_week_${w}_not_started`;
+const weekInProgressKey = (w: number) => `ca_week_${w}_in_progress`;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -161,19 +169,25 @@ function migrateStaffingCol(oldCol: string): string {
 }
 
 function migrateSnhuCol(oldCol: string): string {
-  const valid = new Set([
-    "cur_term",
-    "up_term",
-    "ca_not_started",
-    "ca_in_progress",
-    ...WEEK_KEYS,
-  ]);
+  const valid = new Set<string>(["cur_term", "up_term", "ca_general"]);
+  // Add all week not-started and in-progress keys as valid
+  for (const w of WEEK_NUMS) {
+    valid.add(weekNotStartedKey(w));
+    valid.add(weekInProgressKey(w));
+  }
   if (valid.has(oldCol)) return oldCol;
   // Old keys → new keys
   if (oldCol === "cur_pending" || oldCol === "cur_progress") return "cur_term";
   if (oldCol === "up_pending" || oldCol === "up_progress") return "up_term";
-  if (oldCol === "snhu_na") return "ca_not_started";
-  return "ca_not_started";
+  // Any old week buckets (without _not_started/_in_progress suffix) → ca_general
+  if (
+    oldCol === "ca_not_started" ||
+    oldCol === "ca_in_progress" ||
+    oldCol === "snhu_na" ||
+    WEEK_KEYS.includes(oldCol)
+  )
+    return "ca_general";
+  return "ca_general";
 }
 
 // ─── Default Data ─────────────────────────────────────────────────────────────
@@ -192,6 +206,7 @@ function miguelCard(): LocalStaffingCard {
     col: "staff_na",
     createdBy: "migudavc",
     createdAt: new Date().toISOString(),
+    status: "OUT",
   };
 }
 
@@ -202,7 +217,7 @@ function snhuCanonicalCards(): LocalUniversityCard[] {
       id: "snhu-eng190",
       title: "ENG 190: Research and Persuasion",
       term: "C-2 Term - March thru April 2026",
-      col: "ca_not_started",
+      col: "ca_general",
       createdBy: LOGIN_NAME,
       createdAt: now,
     },
@@ -210,7 +225,7 @@ function snhuCanonicalCards(): LocalUniversityCard[] {
       id: "snhu-ids105",
       title: "IDS 105: Awareness and Online Learning",
       term: "C-2 Term - March thru April 2026",
-      col: "ca_not_started",
+      col: "ca_general",
       createdBy: LOGIN_NAME,
       createdAt: now,
     },
@@ -218,7 +233,7 @@ function snhuCanonicalCards(): LocalUniversityCard[] {
       id: "snhu-eco202",
       title: "ECO 202: Macroeconomics",
       term: "C-3 Term - May thru June 2026",
-      col: "ca_not_started",
+      col: "ca_general",
       createdBy: LOGIN_NAME,
       createdAt: now,
     },
@@ -226,7 +241,7 @@ function snhuCanonicalCards(): LocalUniversityCard[] {
       id: "snhu-phl260",
       title: "PHL 260: Ethical Decision-Making & Problem-Solving",
       term: "C-3 Term - May thru June 2026",
-      col: "ca_not_started",
+      col: "ca_general",
       createdBy: LOGIN_NAME,
       createdAt: now,
     },
@@ -246,7 +261,8 @@ function normalizeSnhuCards(
 
   for (const canon of canonical) {
     const existing = existingById.get(canon.id);
-    result.push({ ...canon, col: existing?.col ?? "ca_not_started" });
+    const col = existing?.col ? migrateSnhuCol(existing.col) : "ca_general";
+    result.push({ ...canon, col });
   }
 
   for (const c of cards) {
@@ -379,16 +395,18 @@ function TopBar({
               Lock
             </button>
           )}
-          <div
-            style={{
-              fontSize: 16,
-              color: "var(--text-muted)",
-              fontWeight: 700,
-              letterSpacing: "0.3px",
-            }}
-          >
-            HC: {headCount}
-          </div>
+          {activeBoard === "amazon" && (
+            <div
+              style={{
+                fontSize: 16,
+                color: "var(--text-muted)",
+                fontWeight: 700,
+                letterSpacing: "0.3px",
+              }}
+            >
+              HC: {headCount}
+            </div>
+          )}
         </div>
       </div>
     </header>
@@ -518,6 +536,7 @@ interface StaffingCardViewProps {
   onDragStart: (e: React.DragEvent, cardId: string) => void;
   miguelPhoto: string | null;
   onMiguelPhotoChange: (dataUrl: string) => void;
+  onStatusToggle: (cardId: string) => void;
 }
 
 function StaffingCardView({
@@ -526,8 +545,11 @@ function StaffingCardView({
   onDragStart,
   miguelPhoto,
   onMiguelPhotoChange,
+  onStatusToggle,
 }: StaffingCardViewProps) {
   const isMiguel = card.login === "migudavc";
+  const status = card.status ?? "OUT";
+  const isIn = status === "IN";
 
   return (
     <div
@@ -545,7 +567,6 @@ function StaffingCardView({
         {/* Photo upload square — only for Miguel */}
         {isMiguel && (
           <div
-            // Prevent drag from starting when clicking the photo area
             draggable={false}
             onDragStart={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
@@ -574,7 +595,69 @@ function StaffingCardView({
           >
             {card.shiftCoHost} &mdash; {card.shiftPattern}
           </div>
+
+          {/* IN / OUT status toggle */}
+          <div
+            className="flex gap-1.5 mt-2"
+            draggable={false}
+            onDragStart={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!isIn) onStatusToggle(card.id);
+              }}
+              style={{
+                padding: "3px 10px",
+                borderRadius: 8,
+                fontSize: 11,
+                fontWeight: 700,
+                cursor: isIn ? "default" : "pointer",
+                border: isIn
+                  ? "1px solid rgba(29,185,84,0.55)"
+                  : "1px solid rgba(255,255,255,0.15)",
+                background: isIn
+                  ? "rgba(29,185,84,0.22)"
+                  : "rgba(255,255,255,0.05)",
+                color: isIn
+                  ? "rgba(80,220,130,0.95)"
+                  : "rgba(255,255,255,0.40)",
+                transition: "all 0.15s",
+              }}
+            >
+              IN
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (isIn) onStatusToggle(card.id);
+              }}
+              style={{
+                padding: "3px 10px",
+                borderRadius: 8,
+                fontSize: 11,
+                fontWeight: 700,
+                cursor: !isIn ? "default" : "pointer",
+                border: !isIn
+                  ? "1px solid rgba(255,77,77,0.55)"
+                  : "1px solid rgba(255,255,255,0.15)",
+                background: !isIn
+                  ? "rgba(255,77,77,0.20)"
+                  : "rgba(255,255,255,0.05)",
+                color: !isIn
+                  ? "rgba(255,120,120,0.95)"
+                  : "rgba(255,255,255,0.40)",
+                transition: "all 0.15s",
+              }}
+            >
+              OUT
+            </button>
+          </div>
         </div>
+
         {!isLocked && (
           <GripVertical
             size={14}
@@ -1191,6 +1274,7 @@ interface StaffingBoardProps {
   cards: LocalStaffingCard[];
   isLocked: boolean;
   onMove: (cardId: string, newCol: string) => void;
+  onStatusToggle: (cardId: string) => void;
   miguelPhoto: string | null;
   onMiguelPhotoChange: (dataUrl: string) => void;
 }
@@ -1199,6 +1283,7 @@ function StaffingBoard({
   cards,
   isLocked,
   onMove,
+  onStatusToggle,
   miguelPhoto,
   onMiguelPhotoChange,
 }: StaffingBoardProps) {
@@ -1313,6 +1398,7 @@ function StaffingBoard({
                           onDragStart={onDragStart}
                           miguelPhoto={miguelPhoto}
                           onMiguelPhotoChange={onMiguelPhotoChange}
+                          onStatusToggle={onStatusToggle}
                         />
                       ))}
                     </DropBucket>
@@ -1336,6 +1422,7 @@ function StaffingBoard({
                         onDragStart={onDragStart}
                         miguelPhoto={miguelPhoto}
                         onMiguelPhotoChange={onMiguelPhotoChange}
+                        onStatusToggle={onStatusToggle}
                       />
                     ))}
                   </DropBucket>
@@ -1346,114 +1433,6 @@ function StaffingBoard({
         })}
       </div>
     </>
-  );
-}
-
-// ─── WeekSelector ────────────────────────────────────────────────────────────
-
-interface WeekSelectorProps {
-  selectedWeek: number | null;
-  onSelect: (week: number | null) => void;
-  buckets: Record<string, LocalUniversityCard[]>;
-}
-
-function WeekSelector({ selectedWeek, onSelect, buckets }: WeekSelectorProps) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: 6,
-        padding: "8px 4px 4px",
-      }}
-    >
-      <span
-        style={{
-          fontSize: 11,
-          fontWeight: 700,
-          color: "rgba(255,255,255,0.45)",
-          letterSpacing: "0.5px",
-          textTransform: "uppercase",
-        }}
-      >
-        Week
-      </span>
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          justifyContent: "center",
-          gap: 5,
-        }}
-      >
-        {[1, 2, 3, 4, 5, 6, 7, 8].map((w) => {
-          const wKey = `ca_week_${w}`;
-          const count = buckets[wKey]?.length ?? 0;
-          const isActive = selectedWeek === w;
-          return (
-            <button
-              key={w}
-              type="button"
-              onClick={() => onSelect(isActive ? null : w)}
-              title={
-                count > 0
-                  ? `Week ${w} — ${count} item${count !== 1 ? "s" : ""}`
-                  : `Week ${w}`
-              }
-              style={{
-                width: 36,
-                height: 36,
-                borderRadius: 10,
-                border: isActive
-                  ? "1.5px solid rgba(29,185,84,0.6)"
-                  : "1px solid rgba(255,255,255,0.14)",
-                background: isActive
-                  ? "rgba(29,185,84,0.18)"
-                  : "rgba(255,255,255,0.05)",
-                color: isActive
-                  ? "rgba(29,220,100,0.95)"
-                  : "rgba(255,255,255,0.70)",
-                fontSize: 13,
-                fontWeight: isActive ? 700 : 500,
-                cursor: "pointer",
-                position: "relative",
-                transition: "background 0.15s, border-color 0.15s, color 0.15s",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              {w}
-              {count > 0 && (
-                <span
-                  style={{
-                    position: "absolute",
-                    top: -4,
-                    right: -4,
-                    width: 14,
-                    height: 14,
-                    borderRadius: "50%",
-                    background: isActive
-                      ? "rgba(29,185,84,0.8)"
-                      : "rgba(255,255,255,0.25)",
-                    fontSize: 9,
-                    fontWeight: 700,
-                    color: isActive ? "#fff" : "rgba(255,255,255,0.9)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    lineHeight: 1,
-                  }}
-                >
-                  {count}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-    </div>
   );
 }
 
@@ -1490,12 +1469,13 @@ function SnhuBoard({
     const m: Record<string, LocalUniversityCard[]> = {
       cur_term: [],
       up_term: [],
-      ca_not_started: [],
-      ca_in_progress: [],
+      ca_general: [],
     };
-    // initialize week buckets
-    for (const wk of WEEK_KEYS) m[wk] = [];
-
+    // Initialize all week buckets
+    for (const w of WEEK_NUMS) {
+      m[weekNotStartedKey(w)] = [];
+      m[weekInProgressKey(w)] = [];
+    }
     for (const c of cards) {
       if (!m[c.col]) m[c.col] = [];
       m[c.col].push(c);
@@ -1592,12 +1572,16 @@ function SnhuBoard({
         }}
       >
         {SNHU_COLS.map((col) => {
-          const colCount = col.sections
-            ? col.sections.reduce(
-                (sum, s) => sum + (buckets[s.key]?.length ?? 0),
-                0,
-              )
-            : (buckets[col.dropKey ?? ""]?.length ?? 0);
+          const colCount =
+            col.key === "ca"
+              ? WEEK_NUMS.reduce(
+                  (sum, w) =>
+                    sum +
+                    (buckets[weekNotStartedKey(w)]?.length ?? 0) +
+                    (buckets[weekInProgressKey(w)]?.length ?? 0),
+                  0,
+                )
+              : (buckets[col.dropKey ?? ""]?.length ?? 0);
 
           const isCurrentAssignments = col.key === "ca";
 
@@ -1650,48 +1634,74 @@ function SnhuBoard({
                 className="flex flex-col gap-2 flex-1"
                 style={{ padding: 12 }}
               >
-                {col.sections ? (
-                  <>
-                    {/* Week selector toggle — centered between header and sections */}
-                    <WeekSelector
-                      selectedWeek={selectedWeek}
-                      onSelect={setSelectedWeek}
-                      buckets={buckets}
-                    />
+                {col.key === "ca" ? (
+                  <div className="flex flex-col gap-2">
+                    {/* Week select dropdown — styled like the board toggle */}
+                    <select
+                      value={selectedWeek ?? ""}
+                      onChange={(e) =>
+                        setSelectedWeek(
+                          e.target.value ? Number(e.target.value) : null,
+                        )
+                      }
+                      style={{
+                        width: "100%",
+                        background: "rgba(255,255,255,0.06)",
+                        border: "1px solid rgba(255,255,255,0.12)",
+                        color: "rgba(255,255,255,0.92)",
+                        borderRadius: 12,
+                        padding: "10px 12px",
+                        fontSize: 14,
+                        outline: "none",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <option value="">Select Week</option>
+                      {WEEK_NUMS.map((w) => (
+                        <option key={w} value={w}>
+                          Week {w}
+                        </option>
+                      ))}
+                    </select>
 
-                    {col.sections.map((sec) => (
-                      <DropBucket
-                        key={sec.key}
-                        bucketKey={sec.key}
-                        label={sec.title}
-                        count={buckets[sec.key]?.length ?? 0}
-                        dragOverId={dragOverId}
-                        isLocked={isLocked}
-                        onDragOver={onDragOver}
-                        onDrop={onDrop}
-                        onDragLeave={() => setDragOverId(null)}
-                      >
-                        {renderCards(sec.key)}
-                      </DropBucket>
-                    ))}
-
-                    {/* Selected week drop zone */}
+                    {/* Not Started + In Progress sub-sections — shown when a week is selected */}
                     {selectedWeek !== null && (
-                      <DropBucket
-                        key={`ca_week_${selectedWeek}`}
-                        bucketKey={`ca_week_${selectedWeek}`}
-                        label={`Week ${selectedWeek}`}
-                        count={buckets[`ca_week_${selectedWeek}`]?.length ?? 0}
-                        dragOverId={dragOverId}
-                        isLocked={isLocked}
-                        onDragOver={onDragOver}
-                        onDrop={onDrop}
-                        onDragLeave={() => setDragOverId(null)}
-                      >
-                        {renderCards(`ca_week_${selectedWeek}`)}
-                      </DropBucket>
+                      <>
+                        <DropBucket
+                          bucketKey={weekNotStartedKey(selectedWeek)}
+                          label="Not Started"
+                          count={
+                            buckets[weekNotStartedKey(selectedWeek)]?.length ??
+                            0
+                          }
+                          dragOverId={dragOverId}
+                          isLocked={isLocked}
+                          onDragOver={onDragOver}
+                          onDrop={onDrop}
+                          onDragLeave={() => setDragOverId(null)}
+                          showHeader={true}
+                        >
+                          {renderCards(weekNotStartedKey(selectedWeek))}
+                        </DropBucket>
+                        <DropBucket
+                          bucketKey={weekInProgressKey(selectedWeek)}
+                          label="In Progress"
+                          count={
+                            buckets[weekInProgressKey(selectedWeek)]?.length ??
+                            0
+                          }
+                          dragOverId={dragOverId}
+                          isLocked={isLocked}
+                          onDragOver={onDragOver}
+                          onDrop={onDrop}
+                          onDragLeave={() => setDragOverId(null)}
+                          showHeader={true}
+                        >
+                          {renderCards(weekInProgressKey(selectedWeek))}
+                        </DropBucket>
+                      </>
                     )}
-                  </>
+                  </div>
                 ) : (
                   <DropBucket
                     bucketKey={col.dropKey!}
@@ -1966,6 +1976,20 @@ export default function App() {
     saveStaffing(next);
   }
 
+  function handleStaffingStatusToggle(cardId: string) {
+    const next = staffingCards.map((c) =>
+      c.id === cardId
+        ? {
+            ...c,
+            status:
+              (c.status ?? "OUT") === "IN" ? ("OUT" as const) : ("IN" as const),
+          }
+        : c,
+    );
+    setStaffingCards(next);
+    saveStaffing(next);
+  }
+
   // University card handlers
   function handleUniversityMove(cardId: string, newCol: string) {
     const next = universityCards.map((c) =>
@@ -1981,7 +2005,7 @@ export default function App() {
     const newCard: LocalUniversityCard = {
       ...data,
       id: `snhu-${uid()}`,
-      col: "ca_not_started",
+      col: "ca_general",
       createdBy: LOGIN_NAME,
       createdAt: new Date().toISOString(),
     };
@@ -1997,7 +2021,7 @@ export default function App() {
     const newCard: LocalUniversityCard = {
       ...data,
       id: `assign-${uid()}`,
-      col: "ca_not_started",
+      col: "ca_general",
       createdBy: LOGIN_NAME,
       createdAt: new Date().toISOString(),
     };
@@ -2084,6 +2108,7 @@ export default function App() {
               cards={staffingCards}
               isLocked={isLocked}
               onMove={handleStaffingMove}
+              onStatusToggle={handleStaffingStatusToggle}
               miguelPhoto={miguelPhoto}
               onMiguelPhotoChange={handleMiguelPhotoChange}
             />
