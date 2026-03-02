@@ -18,9 +18,10 @@ export type Login = string;
 export type PersonName = string;
 export type ShiftCoHost = string;
 export type ShiftPattern = string;
-export interface StaffingCard {
+export interface StaffingBoardCard {
   'id' : CardId,
   'col' : Col,
+  'status' : Status,
   'shiftCoHost' : ShiftCoHost,
   'createdAt' : CreatedAt,
   'createdBy' : CreatedBy,
@@ -28,22 +29,30 @@ export interface StaffingCard {
   'login' : Login,
   'shiftPattern' : ShiftPattern,
 }
+export type Status = string;
 export type Term = string;
 export type Title = string;
-export interface UniversityCard {
+export interface UniversityBoardCard {
   'id' : CardId,
   'col' : Col,
   'title' : Title,
   'createdAt' : CreatedAt,
   'createdBy' : CreatedBy,
   'term' : Term,
+  'week' : string,
+  'dueDate' : string,
+  'course' : string,
+  'assignmentTitle' : string,
 }
 export interface _SERVICE {
-  'getAllStaffingCards' : ActorMethod<[], Array<StaffingCard>>,
-  'getAllUniversityCards' : ActorMethod<[], Array<UniversityCard>>,
+  'getAllStaffingCards' : ActorMethod<[], Array<StaffingBoardCard>>,
+  'getAllUniversityCards' : ActorMethod<[], Array<UniversityBoardCard>>,
   'getLastUpdated' : ActorMethod<[], string>,
-  'saveAllStaffingCards' : ActorMethod<[Array<StaffingCard>], undefined>,
-  'saveAllUniversityCards' : ActorMethod<[Array<UniversityCard>], undefined>,
+  'saveAllStaffingCards' : ActorMethod<[Array<StaffingBoardCard>], undefined>,
+  'saveAllUniversityCards' : ActorMethod<
+    [Array<UniversityBoardCard>],
+    undefined
+  >,
   'setLastUpdated' : ActorMethod<[string], undefined>,
 }
 export declare const idlService: IDL.ServiceClass;

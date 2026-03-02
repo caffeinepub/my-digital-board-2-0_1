@@ -10,15 +10,17 @@ import { IDL } from '@icp-sdk/core/candid';
 
 export const CardId = IDL.Vec(IDL.Nat8);
 export const Col = IDL.Text;
+export const Status = IDL.Text;
 export const ShiftCoHost = IDL.Text;
 export const CreatedAt = IDL.Text;
 export const CreatedBy = IDL.Text;
 export const PersonName = IDL.Text;
 export const Login = IDL.Text;
 export const ShiftPattern = IDL.Text;
-export const StaffingCard = IDL.Record({
+export const StaffingBoardCard = IDL.Record({
   'id' : CardId,
   'col' : Col,
+  'status' : Status,
   'shiftCoHost' : ShiftCoHost,
   'createdAt' : CreatedAt,
   'createdBy' : CreatedBy,
@@ -28,21 +30,29 @@ export const StaffingCard = IDL.Record({
 });
 export const Title = IDL.Text;
 export const Term = IDL.Text;
-export const UniversityCard = IDL.Record({
+export const UniversityBoardCard = IDL.Record({
   'id' : CardId,
   'col' : Col,
   'title' : Title,
   'createdAt' : CreatedAt,
   'createdBy' : CreatedBy,
   'term' : Term,
+  'week' : IDL.Text,
+  'dueDate' : IDL.Text,
+  'course' : IDL.Text,
+  'assignmentTitle' : IDL.Text,
 });
 
 export const idlService = IDL.Service({
-  'getAllStaffingCards' : IDL.Func([], [IDL.Vec(StaffingCard)], ['query']),
-  'getAllUniversityCards' : IDL.Func([], [IDL.Vec(UniversityCard)], ['query']),
+  'getAllStaffingCards' : IDL.Func([], [IDL.Vec(StaffingBoardCard)], ['query']),
+  'getAllUniversityCards' : IDL.Func(
+      [],
+      [IDL.Vec(UniversityBoardCard)],
+      ['query'],
+    ),
   'getLastUpdated' : IDL.Func([], [IDL.Text], ['query']),
-  'saveAllStaffingCards' : IDL.Func([IDL.Vec(StaffingCard)], [], []),
-  'saveAllUniversityCards' : IDL.Func([IDL.Vec(UniversityCard)], [], []),
+  'saveAllStaffingCards' : IDL.Func([IDL.Vec(StaffingBoardCard)], [], []),
+  'saveAllUniversityCards' : IDL.Func([IDL.Vec(UniversityBoardCard)], [], []),
   'setLastUpdated' : IDL.Func([IDL.Text], [], []),
 });
 
@@ -51,15 +61,17 @@ export const idlInitArgs = [];
 export const idlFactory = ({ IDL }) => {
   const CardId = IDL.Vec(IDL.Nat8);
   const Col = IDL.Text;
+  const Status = IDL.Text;
   const ShiftCoHost = IDL.Text;
   const CreatedAt = IDL.Text;
   const CreatedBy = IDL.Text;
   const PersonName = IDL.Text;
   const Login = IDL.Text;
   const ShiftPattern = IDL.Text;
-  const StaffingCard = IDL.Record({
+  const StaffingBoardCard = IDL.Record({
     'id' : CardId,
     'col' : Col,
+    'status' : Status,
     'shiftCoHost' : ShiftCoHost,
     'createdAt' : CreatedAt,
     'createdBy' : CreatedBy,
@@ -69,25 +81,33 @@ export const idlFactory = ({ IDL }) => {
   });
   const Title = IDL.Text;
   const Term = IDL.Text;
-  const UniversityCard = IDL.Record({
+  const UniversityBoardCard = IDL.Record({
     'id' : CardId,
     'col' : Col,
     'title' : Title,
     'createdAt' : CreatedAt,
     'createdBy' : CreatedBy,
     'term' : Term,
+    'week' : IDL.Text,
+    'dueDate' : IDL.Text,
+    'course' : IDL.Text,
+    'assignmentTitle' : IDL.Text,
   });
   
   return IDL.Service({
-    'getAllStaffingCards' : IDL.Func([], [IDL.Vec(StaffingCard)], ['query']),
+    'getAllStaffingCards' : IDL.Func(
+        [],
+        [IDL.Vec(StaffingBoardCard)],
+        ['query'],
+      ),
     'getAllUniversityCards' : IDL.Func(
         [],
-        [IDL.Vec(UniversityCard)],
+        [IDL.Vec(UniversityBoardCard)],
         ['query'],
       ),
     'getLastUpdated' : IDL.Func([], [IDL.Text], ['query']),
-    'saveAllStaffingCards' : IDL.Func([IDL.Vec(StaffingCard)], [], []),
-    'saveAllUniversityCards' : IDL.Func([IDL.Vec(UniversityCard)], [], []),
+    'saveAllStaffingCards' : IDL.Func([IDL.Vec(StaffingBoardCard)], [], []),
+    'saveAllUniversityCards' : IDL.Func([IDL.Vec(UniversityBoardCard)], [], []),
     'setLastUpdated' : IDL.Func([IDL.Text], [], []),
   });
 };

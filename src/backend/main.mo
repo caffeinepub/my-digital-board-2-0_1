@@ -3,7 +3,9 @@ import Blob "mo:core/Blob";
 import Array "mo:core/Array";
 import List "mo:core/List";
 import Order "mo:core/Order";
-import Runtime "mo:core/Runtime";
+
+
+// apply migration in with clause
 
 actor {
   type CardId = Blob;
@@ -16,8 +18,13 @@ actor {
   type CreatedAt = Text;
   type Title = Text;
   type Term = Text;
+  type Status = Text;
+  type AssignmentTitle = Text;
+  type Course = Text;
+  type DueDate = Text;
+  type Week = Text;
 
-  type StaffingCard = {
+  type StaffingBoardCard = {
     id : CardId;
     personName : PersonName;
     login : Login;
@@ -26,50 +33,55 @@ actor {
     col : Col;
     createdBy : CreatedBy;
     createdAt : CreatedAt;
+    status : Status;
   };
 
-  type UniversityCard = {
+  type UniversityBoardCard = {
     id : CardId;
     title : Title;
     term : Term;
     col : Col;
     createdBy : CreatedBy;
     createdAt : CreatedAt;
+    assignmentTitle : Text;
+    course : Text;
+    dueDate : Text;
+    week : Text;
   };
 
-  module StaffingCard {
-    public func compare(a : StaffingCard, b : StaffingCard) : Order.Order {
+  module StaffingBoardCard {
+    public func compare(a : StaffingBoardCard, b : StaffingBoardCard) : Order.Order {
       Text.compare(a.personName, b.personName);
     };
   };
 
-  let staffingCards = List.empty<StaffingCard>();
+  let staffingCards = List.empty<StaffingBoardCard>();
 
-  module UniversityCard {
-    public func compare(a : UniversityCard, b : UniversityCard) : Order.Order {
+  module UniversityBoardCard {
+    public func compare(a : UniversityBoardCard, b : UniversityBoardCard) : Order.Order {
       Text.compare(a.title, b.title);
     };
   };
 
-  let universityCards = List.empty<UniversityCard>();
+  let universityCards = List.empty<UniversityBoardCard>();
 
   var lastUpdated : Text = "";
 
-  public shared ({ caller }) func saveAllStaffingCards(cards : [StaffingCard]) : async () {
+  public shared ({ caller }) func saveAllStaffingCards(cards : [StaffingBoardCard]) : async () {
     staffingCards.clear();
     staffingCards.addAll(cards.values());
   };
 
-  public query ({ caller }) func getAllStaffingCards() : async [StaffingCard] {
+  public query ({ caller }) func getAllStaffingCards() : async [StaffingBoardCard] {
     staffingCards.toArray().sort();
   };
 
-  public shared ({ caller }) func saveAllUniversityCards(cards : [UniversityCard]) : async () {
+  public shared ({ caller }) func saveAllUniversityCards(cards : [UniversityBoardCard]) : async () {
     universityCards.clear();
     universityCards.addAll(cards.values());
   };
 
-  public query ({ caller }) func getAllUniversityCards() : async [UniversityCard] {
+  public query ({ caller }) func getAllUniversityCards() : async [UniversityBoardCard] {
     universityCards.toArray().sort();
   };
 

@@ -101,8 +101,14 @@ const STAFFING_COLS: ColConfig[] = [
 ];
 
 const SNHU_COLS: ColConfig[] = [
-  { key: "cur", title: "Current Term", sections: null, dropKey: "cur_term" },
-  { key: "up", title: "Upcoming Term", sections: null, dropKey: "up_term" },
+  {
+    key: "mcs",
+    title: "My Class Schedule",
+    sections: [
+      { key: "mcs_current", title: "Current Term" },
+      { key: "mcs_upcoming", title: "Upcoming Term" },
+    ],
+  },
   {
     key: "ca",
     title: "Current Assignments",
@@ -169,7 +175,7 @@ function migrateStaffingCol(oldCol: string): string {
 }
 
 function migrateSnhuCol(oldCol: string): string {
-  const valid = new Set<string>(["cur_term", "up_term", "ca_general"]);
+  const valid = new Set<string>(["mcs_current", "mcs_upcoming", "ca_general"]);
   // Add all week not-started and in-progress keys as valid
   for (const w of WEEK_NUMS) {
     valid.add(weekNotStartedKey(w));
@@ -177,8 +183,18 @@ function migrateSnhuCol(oldCol: string): string {
   }
   if (valid.has(oldCol)) return oldCol;
   // Old keys → new keys
-  if (oldCol === "cur_pending" || oldCol === "cur_progress") return "cur_term";
-  if (oldCol === "up_pending" || oldCol === "up_progress") return "up_term";
+  if (
+    oldCol === "cur_term" ||
+    oldCol === "cur_pending" ||
+    oldCol === "cur_progress"
+  )
+    return "mcs_current";
+  if (
+    oldCol === "up_term" ||
+    oldCol === "up_pending" ||
+    oldCol === "up_progress"
+  )
+    return "mcs_upcoming";
   // Any old week buckets (without _not_started/_in_progress suffix) → ca_general
   if (
     oldCol === "ca_not_started" ||
@@ -210,68 +226,19 @@ function miguelCard(): LocalStaffingCard {
   };
 }
 
-function snhuCanonicalCards(): LocalUniversityCard[] {
-  const now = new Date().toISOString();
-  return [
-    {
-      id: "snhu-eng190",
-      title: "ENG 190: Research and Persuasion",
-      term: "C-2 Term - March thru April 2026",
-      col: "ca_general",
-      createdBy: LOGIN_NAME,
-      createdAt: now,
-    },
-    {
-      id: "snhu-ids105",
-      title: "IDS 105: Awareness and Online Learning",
-      term: "C-2 Term - March thru April 2026",
-      col: "ca_general",
-      createdBy: LOGIN_NAME,
-      createdAt: now,
-    },
-    {
-      id: "snhu-eco202",
-      title: "ECO 202: Macroeconomics",
-      term: "C-3 Term - May thru June 2026",
-      col: "ca_general",
-      createdBy: LOGIN_NAME,
-      createdAt: now,
-    },
-    {
-      id: "snhu-phl260",
-      title: "PHL 260: Ethical Decision-Making & Problem-Solving",
-      term: "C-3 Term - May thru June 2026",
-      col: "ca_general",
-      createdBy: LOGIN_NAME,
-      createdAt: now,
-    },
-  ];
-}
-
 function normalizeSnhuCards(
   cards: LocalUniversityCard[],
 ): LocalUniversityCard[] {
-  const canonical = snhuCanonicalCards();
-  const canonById = new Map(canonical.map((c) => [c.id, c]));
-
-  const existingById = new Map<string, LocalUniversityCard>();
-  for (const c of cards) if (c?.id) existingById.set(c.id, c);
-
-  const result: LocalUniversityCard[] = [];
-
-  for (const canon of canonical) {
-    const existing = existingById.get(canon.id);
-    const col = existing?.col ? migrateSnhuCol(existing.col) : "ca_general";
-    result.push({ ...canon, col });
-  }
-
-  for (const c of cards) {
-    if (!c) continue;
-    if (canonById.has(c.id)) continue;
-    result.push(c);
-  }
-
-  return result;
+  // Filter out the old canonical default courses (if present from prior sessions)
+  const defaultIds = new Set([
+    "snhu-eng190",
+    "snhu-ids105",
+    "snhu-eco202",
+    "snhu-phl260",
+  ]);
+  return cards
+    .filter((c) => c && !defaultIds.has(c.id))
+    .map((c) => ({ ...c, col: migrateSnhuCol(c.col) }));
 }
 
 // ─── TopBar ───────────────────────────────────────────────────────────────────
@@ -438,8 +405,27 @@ function MiguelPhotoUpload({
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const dataUrl = ev.target?.result as string;
-      onPhotoChange(dataUrl);
+      const rawDataUrl = ev.target?.result as string;
+      // Compress/resize to a small thumbnail so it always fits in localStorage
+      const img = new Image();
+      img.onload = () => {
+        const MAX = 200; // max dimension in px
+        const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+        const w = Math.round(img.width * scale);
+        const h = Math.round(img.height * scale);
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          onPhotoChange(rawDataUrl);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, w, h);
+        const compressed = canvas.toDataURL("image/jpeg", 0.82);
+        onPhotoChange(compressed);
+      };
+      img.src = rawDataUrl;
     };
     reader.readAsDataURL(file);
     // Reset input so same file can be re-selected
@@ -553,117 +539,145 @@ function StaffingCardView({
 
   return (
     <div
-      className="glass-card rounded-2xl no-select transition-shadow"
       draggable={!isLocked}
       onDragStart={(e) => onDragStart(e, card.id)}
       title={isLocked ? "Locked" : "Drag to move"}
       style={{
-        padding: "12px",
-        boxShadow: "var(--shadow-card)",
-        cursor: isLocked ? "default" : "grab",
+        transition: "transform 0.45s cubic-bezier(0.4, 0.2, 0.2, 1)",
+        transform: isIn ? "rotate(0deg)" : "rotate(180deg)",
+        transformOrigin: "center center",
       }}
     >
-      <div className="flex items-center justify-between gap-2">
-        {/* Photo upload square — only for Miguel */}
-        {isMiguel && (
-          <div
-            draggable={false}
-            onDragStart={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-            style={{ flexShrink: 0 }}
-          >
-            <MiguelPhotoUpload
-              photoDataUrl={miguelPhoto}
-              onPhotoChange={onMiguelPhotoChange}
-            />
-          </div>
-        )}
-
-        <div className="min-w-0 flex-1">
-          <p
-            className="font-bold truncate m-0"
-            style={{ fontSize: 14, color: "var(--text-primary)" }}
-          >
-            {card.personName}{" "}
-            <span style={{ fontWeight: 500, opacity: 0.75 }}>
-              ({card.login})
-            </span>
-          </p>
-          <div
-            className="mt-1"
-            style={{ fontSize: 13, color: "rgba(255,255,255,0.82)" }}
-          >
-            {card.shiftCoHost} &mdash; {card.shiftPattern}
-          </div>
-
-          {/* IN / OUT status toggle */}
-          <div
-            className="flex gap-1.5 mt-2"
-            draggable={false}
-            onDragStart={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (!isIn) onStatusToggle(card.id);
-              }}
-              style={{
-                padding: "3px 10px",
-                borderRadius: 8,
-                fontSize: 11,
-                fontWeight: 700,
-                cursor: isIn ? "default" : "pointer",
-                border: isIn
-                  ? "1px solid rgba(29,185,84,0.55)"
-                  : "1px solid rgba(255,255,255,0.15)",
-                background: isIn
-                  ? "rgba(29,185,84,0.22)"
-                  : "rgba(255,255,255,0.05)",
-                color: isIn
-                  ? "rgba(80,220,130,0.95)"
-                  : "rgba(255,255,255,0.40)",
-                transition: "all 0.15s",
-              }}
+      <div
+        className="glass-card rounded-2xl no-select transition-shadow"
+        style={{
+          padding: "12px",
+          boxShadow: "var(--shadow-card)",
+        }}
+      >
+        <div
+          className="flex items-center justify-between gap-2"
+          style={{
+            // Counter-rotate content so text is always readable
+            transform: isIn ? "rotate(0deg)" : "rotate(180deg)",
+            transition: "transform 0.45s cubic-bezier(0.4, 0.2, 0.2, 1)",
+          }}
+        >
+          {/* Photo upload square — only for Miguel */}
+          {isMiguel && (
+            <div
+              draggable={false}
+              onDragStart={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+              style={{ flexShrink: 0 }}
             >
-              IN
-            </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (isIn) onStatusToggle(card.id);
-              }}
-              style={{
-                padding: "3px 10px",
-                borderRadius: 8,
-                fontSize: 11,
-                fontWeight: 700,
-                cursor: !isIn ? "default" : "pointer",
-                border: !isIn
-                  ? "1px solid rgba(255,77,77,0.55)"
-                  : "1px solid rgba(255,255,255,0.15)",
-                background: !isIn
-                  ? "rgba(255,77,77,0.20)"
-                  : "rgba(255,255,255,0.05)",
-                color: !isIn
-                  ? "rgba(255,120,120,0.95)"
-                  : "rgba(255,255,255,0.40)",
-                transition: "all 0.15s",
-              }}
+              <MiguelPhotoUpload
+                photoDataUrl={miguelPhoto}
+                onPhotoChange={onMiguelPhotoChange}
+              />
+            </div>
+          )}
+
+          <div className="min-w-0 flex-1">
+            <p
+              className="font-bold truncate m-0"
+              style={{ fontSize: 14, color: "var(--text-primary)" }}
             >
-              OUT
-            </button>
+              {card.personName}{" "}
+              <span style={{ fontWeight: 500, opacity: 0.75 }}>
+                ({card.login})
+              </span>
+            </p>
+            <div
+              className="mt-1"
+              style={{ fontSize: 13, color: "rgba(255,255,255,0.82)" }}
+            >
+              {card.shiftCoHost} &mdash; {card.shiftPattern}
+            </div>
+
+            {/* IN / OUT status toggle */}
+            <div
+              className="flex gap-1.5 mt-2"
+              draggable={false}
+              onDragStart={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!isIn) onStatusToggle(card.id);
+                }}
+                style={{
+                  padding: "3px 10px",
+                  borderRadius: 8,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: isIn ? "default" : "pointer",
+                  border: isIn
+                    ? "1px solid rgba(29,185,84,0.55)"
+                    : "1px solid rgba(255,255,255,0.15)",
+                  background: isIn
+                    ? "rgba(29,185,84,0.22)"
+                    : "rgba(255,255,255,0.05)",
+                  color: isIn
+                    ? "rgba(80,220,130,0.95)"
+                    : "rgba(255,255,255,0.40)",
+                  transition: "all 0.15s",
+                }}
+              >
+                IN
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (isIn) onStatusToggle(card.id);
+                }}
+                style={{
+                  padding: "3px 10px",
+                  borderRadius: 8,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: !isIn ? "default" : "pointer",
+                  border: !isIn
+                    ? "1px solid rgba(255,77,77,0.55)"
+                    : "1px solid rgba(255,255,255,0.15)",
+                  background: !isIn
+                    ? "rgba(255,77,77,0.20)"
+                    : "rgba(255,255,255,0.05)",
+                  color: !isIn
+                    ? "rgba(255,120,120,0.95)"
+                    : "rgba(255,255,255,0.40)",
+                  transition: "all 0.15s",
+                }}
+              >
+                OUT
+              </button>
+            </div>
           </div>
+
+          {!isLocked && (
+            <div
+              draggable={false}
+              onDragStart={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+            >
+              <GripVertical
+                size={14}
+                style={{
+                  color: "var(--text-dim)",
+                  flexShrink: 0,
+                  marginTop: 2,
+                }}
+              />
+            </div>
+          )}
         </div>
-
-        {!isLocked && (
-          <GripVertical
-            size={14}
-            style={{ color: "var(--text-dim)", flexShrink: 0, marginTop: 2 }}
-          />
-        )}
       </div>
     </div>
   );
@@ -1467,8 +1481,8 @@ function SnhuBoard({
 
   const buckets = useMemo(() => {
     const m: Record<string, LocalUniversityCard[]> = {
-      cur_term: [],
-      up_term: [],
+      mcs_current: [],
+      mcs_upcoming: [],
       ca_general: [],
     };
     // Initialize all week buckets
@@ -1525,55 +1539,25 @@ function SnhuBoard({
 
   return (
     <>
-      {/* Top action bar */}
-      {!isLocked && (
-        <div className="flex justify-end gap-2 mb-2 mt-3">
-          <button
-            type="button"
-            onClick={() => setDeleteOpen(true)}
-            className="flex items-center gap-1.5 text-xs rounded-xl transition-colors"
-            style={{
-              background: "rgba(255,77,77,0.14)",
-              border: "1px solid rgba(255,77,77,0.35)",
-              color: "rgba(255,120,120,0.9)",
-              padding: "7px 14px",
-              cursor: "pointer",
-              fontWeight: 600,
-            }}
-          >
-            Delete Course
-          </button>
-          <button
-            type="button"
-            onClick={() => setAddOpen(true)}
-            className="flex items-center gap-1.5 text-xs rounded-xl transition-colors"
-            style={{
-              background: "var(--btn-primary)",
-              border: "1px solid var(--btn-primary-border)",
-              color: "var(--btn-primary-text)",
-              padding: "7px 14px",
-              cursor: "pointer",
-              fontWeight: 600,
-            }}
-          >
-            <Plus size={13} />
-            Add Course
-          </button>
-        </div>
-      )}
-
       <div
-        className="board-grid-3 mt-3"
+        className="board-grid-2 mt-3"
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(3, 1fr)",
+          gridTemplateColumns: "repeat(2, 1fr)",
           gap: 12,
           alignItems: "start",
         }}
       >
         {SNHU_COLS.map((col) => {
-          const colCount =
-            col.key === "ca"
+          const isMyClassSchedule = col.key === "mcs";
+          const isCurrentAssignments = col.key === "ca";
+
+          const colCount = isMyClassSchedule
+            ? (col.sections ?? []).reduce(
+                (sum, s) => sum + (buckets[s.key]?.length ?? 0),
+                0,
+              )
+            : isCurrentAssignments
               ? WEEK_NUMS.reduce(
                   (sum, w) =>
                     sum +
@@ -1583,15 +1567,13 @@ function SnhuBoard({
                 )
               : (buckets[col.dropKey ?? ""]?.length ?? 0);
 
-          const isCurrentAssignments = col.key === "ca";
-
           return (
             <div
               key={col.key}
               className="glass-panel rounded-2xl overflow-hidden flex flex-col"
               style={{ boxShadow: "var(--shadow-panel)", minHeight: 420 }}
             >
-              {/* Column header — Add Assignment button inline for Current Assignments */}
+              {/* Column header */}
               <div
                 className="flex items-center justify-between"
                 style={{
@@ -1606,6 +1588,43 @@ function SnhuBoard({
                   {col.title}
                 </h2>
                 <div className="flex items-center gap-2">
+                  {/* Add/Delete Course buttons inside My Class Schedule column */}
+                  {isMyClassSchedule && !isLocked && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setDeleteOpen(true)}
+                        className="flex items-center gap-1 text-xs rounded-lg transition-colors"
+                        style={{
+                          background: "rgba(255,77,77,0.14)",
+                          border: "1px solid rgba(255,77,77,0.35)",
+                          color: "rgba(255,120,120,0.9)",
+                          padding: "4px 10px",
+                          cursor: "pointer",
+                          fontWeight: 600,
+                        }}
+                      >
+                        Delete Course
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAddOpen(true)}
+                        className="flex items-center gap-1 text-xs rounded-lg transition-colors"
+                        style={{
+                          background: "var(--btn-primary)",
+                          border: "1px solid var(--btn-primary-border)",
+                          color: "var(--btn-primary-text)",
+                          padding: "4px 10px",
+                          cursor: "pointer",
+                          fontWeight: 600,
+                        }}
+                      >
+                        <Plus size={11} />
+                        Add Course
+                      </button>
+                    </>
+                  )}
+                  {/* Add Assignment button inside Current Assignments column */}
                   {isCurrentAssignments && !isLocked && (
                     <button
                       type="button"
@@ -1634,7 +1653,24 @@ function SnhuBoard({
                 className="flex flex-col gap-2 flex-1"
                 style={{ padding: 12 }}
               >
-                {col.key === "ca" ? (
+                {isMyClassSchedule ? (
+                  (col.sections ?? []).map((sec) => (
+                    <DropBucket
+                      key={sec.key}
+                      bucketKey={sec.key}
+                      label={sec.title}
+                      count={buckets[sec.key]?.length ?? 0}
+                      dragOverId={dragOverId}
+                      isLocked={isLocked}
+                      onDragOver={onDragOver}
+                      onDrop={onDrop}
+                      onDragLeave={() => setDragOverId(null)}
+                      showHeader={true}
+                    >
+                      {renderCards(sec.key)}
+                    </DropBucket>
+                  ))
+                ) : isCurrentAssignments ? (
                   <div className="flex flex-col gap-2">
                     {/* Week select dropdown — styled like the board toggle */}
                     <select
@@ -1761,13 +1797,23 @@ export default function App() {
   const [universityCards, setUniversityCards] = useState<LocalUniversityCard[]>(
     [],
   );
-  const [miguelPhoto, setMiguelPhoto] = useState<string | null>(() =>
-    localStorage.getItem(MIGUEL_PHOTO_KEY),
-  );
+  const [miguelPhoto, setMiguelPhoto] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(MIGUEL_PHOTO_KEY);
+    } catch {
+      return null;
+    }
+  });
 
   function handleMiguelPhotoChange(dataUrl: string) {
     setMiguelPhoto(dataUrl);
-    localStorage.setItem(MIGUEL_PHOTO_KEY, dataUrl);
+    // The dataUrl is already compressed to a small thumbnail, so this should always succeed
+    try {
+      localStorage.setItem(MIGUEL_PHOTO_KEY, dataUrl);
+    } catch (err) {
+      // Extremely unlikely now that the image is compressed; just log it
+      console.warn("Could not save photo to localStorage", err);
+    }
   }
 
   // Load from backend on mount (once actor is ready)
@@ -1785,17 +1831,21 @@ export default function App() {
           actor!.getLastUpdated(),
         ]);
 
-        // Process staffing cards
-        let sCards: LocalStaffingCard[] = rawStaff.map((c) => ({
-          id: decodeId(c.id),
-          personName: c.personName,
-          login: c.login,
-          shiftCoHost: c.shiftCoHost,
-          shiftPattern: c.shiftPattern,
-          col: migrateStaffingCol(c.col),
-          createdBy: c.createdBy,
-          createdAt: c.createdAt,
-        }));
+        // Process staffing cards — all fields including status now come from backend
+        let sCards: LocalStaffingCard[] = rawStaff.map((c) => {
+          const id = decodeId(c.id);
+          return {
+            id,
+            personName: c.personName,
+            login: c.login,
+            shiftCoHost: c.shiftCoHost,
+            shiftPattern: c.shiftPattern,
+            col: migrateStaffingCol(c.col),
+            createdBy: c.createdBy,
+            createdAt: c.createdAt,
+            status: (c.status === "IN" ? "IN" : "OUT") as "IN" | "OUT",
+          };
+        });
 
         if (sCards.length === 0) {
           sCards = [miguelCard()];
@@ -1810,6 +1860,7 @@ export default function App() {
               col: c.col,
               createdBy: c.createdBy,
               createdAt: c.createdAt,
+              status: c.status ?? "OUT",
             })),
           );
         } else {
@@ -1822,7 +1873,7 @@ export default function App() {
           if (!hasMiguel) sCards = [miguelCard(), ...sCards];
         }
 
-        // Process university cards
+        // Process university cards — decode all fields from backend
         let uCards: LocalUniversityCard[] = rawUni.map((c) => ({
           id: decodeId(c.id),
           title: c.title,
@@ -1830,22 +1881,29 @@ export default function App() {
           col: migrateSnhuCol(c.col),
           createdBy: c.createdBy,
           createdAt: c.createdAt,
+          assignmentTitle: c.assignmentTitle || undefined,
+          course: c.course || undefined,
+          dueDate: c.dueDate || undefined,
+          week: c.week && c.week !== "0" ? Number(c.week) : undefined,
         }));
 
         uCards = normalizeSnhuCards(uCards);
 
-        if (rawUni.length === 0) {
-          await actor!.saveAllUniversityCards(
-            uCards.map((c) => ({
-              id: encodeId(c.id),
-              title: c.title,
-              term: c.term,
-              col: c.col,
-              createdBy: c.createdBy,
-              createdAt: c.createdAt,
-            })),
-          );
-        }
+        // Always save to keep backend in sync after migration/normalization
+        await actor!.saveAllUniversityCards(
+          uCards.map((c) => ({
+            id: encodeId(c.id),
+            title: c.title,
+            term: c.term,
+            col: c.col,
+            createdBy: c.createdBy,
+            createdAt: c.createdAt,
+            assignmentTitle: c.assignmentTitle ?? "",
+            course: c.course ?? "",
+            dueDate: c.dueDate ?? "",
+            week: c.week !== undefined ? String(c.week) : "0",
+          })),
+        );
 
         if (lu) {
           setLastUpdated(lu);
@@ -1906,6 +1964,9 @@ export default function App() {
     localStorage.setItem(`swb_locked_${LOGIN_NAME}`, isLocked ? "1" : "0");
   }, [isLocked]);
 
+  // ─── isSaving ref — prevents polling from overwriting in-progress saves ────
+  const isSaving = useRef(false);
+
   // Save helpers — localStorage is primary (immediate), backend is fire-and-forget
   const saveStaffing = useCallback(
     (cards: LocalStaffingCard[]) => {
@@ -1917,6 +1978,7 @@ export default function App() {
 
       // 2. Fire-and-forget backend sync (no loading toast, no rollback on failure)
       if (!actor) return;
+      isSaving.current = true;
       actor
         .saveAllStaffingCards(
           cards.map((c) => ({
@@ -1928,10 +1990,15 @@ export default function App() {
             col: c.col,
             createdBy: c.createdBy,
             createdAt: c.createdAt,
+            status: c.status ?? "OUT",
           })),
         )
-        .then(() => actor.setLastUpdated(stamp))
+        .then(() => {
+          isSaving.current = false;
+          return actor.setLastUpdated(stamp);
+        })
         .catch(() => {
+          isSaving.current = false;
           toast.warning("Saved locally.", { id: "save-warn", duration: 2500 });
         });
     },
@@ -1948,6 +2015,7 @@ export default function App() {
 
       // 2. Fire-and-forget backend sync (no loading toast, no rollback on failure)
       if (!actor) return;
+      isSaving.current = true;
       actor
         .saveAllUniversityCards(
           cards.map((c) => ({
@@ -1957,15 +2025,99 @@ export default function App() {
             col: c.col,
             createdBy: c.createdBy,
             createdAt: c.createdAt,
+            assignmentTitle: c.assignmentTitle ?? "",
+            course: c.course ?? "",
+            dueDate: c.dueDate ?? "",
+            week: c.week !== undefined ? String(c.week) : "0",
           })),
         )
-        .then(() => actor.setLastUpdated(stamp))
+        .then(() => {
+          isSaving.current = false;
+          return actor.setLastUpdated(stamp);
+        })
         .catch(() => {
+          isSaving.current = false;
           toast.warning("Saved locally.", { id: "save-warn", duration: 2500 });
         });
     },
     [actor],
   );
+
+  // ─── Background polling for cross-device sync ────────────────────────────────
+  const fetchAndMerge = useCallback(async () => {
+    if (!actor || isSaving.current) return;
+    try {
+      const [rawStaff, rawUni, lu] = await Promise.all([
+        actor.getAllStaffingCards(),
+        actor.getAllUniversityCards(),
+        actor.getLastUpdated(),
+      ]);
+
+      const sCards: LocalStaffingCard[] = rawStaff.map((c) => {
+        const id = decodeId(c.id);
+        return {
+          id,
+          personName: c.personName,
+          login: c.login,
+          shiftCoHost: c.shiftCoHost,
+          shiftPattern: c.shiftPattern,
+          col: migrateStaffingCol(c.col),
+          createdBy: c.createdBy,
+          createdAt: c.createdAt,
+          status: (c.status === "IN" ? "IN" : "OUT") as "IN" | "OUT",
+        };
+      });
+
+      // Ensure Miguel is always present
+      const hasMiguel = sCards.some(
+        (c) =>
+          c.login === "migudavc" &&
+          c.personName.toLowerCase().includes("miguel"),
+      );
+      const finalStaff = hasMiguel ? sCards : [miguelCard(), ...sCards];
+
+      let uCards: LocalUniversityCard[] = rawUni.map((c) => ({
+        id: decodeId(c.id),
+        title: c.title,
+        term: c.term,
+        col: migrateSnhuCol(c.col),
+        createdBy: c.createdBy,
+        createdAt: c.createdAt,
+        assignmentTitle: c.assignmentTitle || undefined,
+        course: c.course || undefined,
+        dueDate: c.dueDate || undefined,
+        week: c.week && c.week !== "0" ? Number(c.week) : undefined,
+      }));
+      uCards = normalizeSnhuCards(uCards);
+
+      setStaffingCards(finalStaff);
+      setUniversityCards(uCards);
+      localStorage.setItem(LS_STAFFING_KEY, JSON.stringify(finalStaff));
+      localStorage.setItem(LS_UNIVERSITY_KEY, JSON.stringify(uCards));
+
+      if (lu) {
+        setLastUpdated(lu);
+        localStorage.setItem("swb_lastUpdated", lu);
+      }
+    } catch {
+      // Silent fail — offline or transient error
+    }
+  }, [actor]);
+
+  useEffect(() => {
+    if (!loaded || !actor) return;
+
+    // Poll every 10 seconds
+    const interval = setInterval(fetchAndMerge, 10_000);
+
+    // Re-fetch on window focus (other device may have made changes)
+    window.addEventListener("focus", fetchAndMerge);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", fetchAndMerge);
+    };
+  }, [loaded, actor, fetchAndMerge]);
 
   // Staffing card handlers
   function handleStaffingMove(cardId: string, newCol: string) {
@@ -2005,7 +2157,7 @@ export default function App() {
     const newCard: LocalUniversityCard = {
       ...data,
       id: `snhu-${uid()}`,
-      col: "ca_general",
+      col: "mcs_current",
       createdBy: LOGIN_NAME,
       createdAt: new Date().toISOString(),
     };

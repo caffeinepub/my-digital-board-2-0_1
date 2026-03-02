@@ -90,23 +90,28 @@ export class ExternalBlob {
     }
 }
 export type ShiftCoHost = string;
-export type ShiftPattern = string;
-export type Col = string;
-export type Term = string;
-export type Title = string;
-export type CreatedBy = string;
-export type CreatedAt = string;
-export interface UniversityCard {
+export interface UniversityBoardCard {
     id: CardId;
     col: Col;
     title: Title;
     createdAt: CreatedAt;
     createdBy: CreatedBy;
     term: Term;
+    week: string;
+    dueDate: string;
+    course: string;
+    assignmentTitle: string;
 }
-export interface StaffingCard {
+export type ShiftPattern = string;
+export type Col = string;
+export type Term = string;
+export type Title = string;
+export type CreatedBy = string;
+export type CreatedAt = string;
+export interface StaffingBoardCard {
     id: CardId;
     col: Col;
+    status: Status;
     shiftCoHost: ShiftCoHost;
     createdAt: CreatedAt;
     createdBy: CreatedBy;
@@ -114,20 +119,21 @@ export interface StaffingCard {
     login: Login;
     shiftPattern: ShiftPattern;
 }
+export type Status = string;
 export type PersonName = string;
 export type Login = string;
 export type CardId = Uint8Array;
 export interface backendInterface {
-    getAllStaffingCards(): Promise<Array<StaffingCard>>;
-    getAllUniversityCards(): Promise<Array<UniversityCard>>;
+    getAllStaffingCards(): Promise<Array<StaffingBoardCard>>;
+    getAllUniversityCards(): Promise<Array<UniversityBoardCard>>;
     getLastUpdated(): Promise<string>;
-    saveAllStaffingCards(cards: Array<StaffingCard>): Promise<void>;
-    saveAllUniversityCards(cards: Array<UniversityCard>): Promise<void>;
+    saveAllStaffingCards(cards: Array<StaffingBoardCard>): Promise<void>;
+    saveAllUniversityCards(cards: Array<UniversityBoardCard>): Promise<void>;
     setLastUpdated(timestamp: string): Promise<void>;
 }
 export class Backend implements backendInterface {
     constructor(private actor: ActorSubclass<_SERVICE>, private _uploadFile: (file: ExternalBlob) => Promise<Uint8Array>, private _downloadFile: (file: Uint8Array) => Promise<ExternalBlob>, private processError?: (error: unknown) => never){}
-    async getAllStaffingCards(): Promise<Array<StaffingCard>> {
+    async getAllStaffingCards(): Promise<Array<StaffingBoardCard>> {
         if (this.processError) {
             try {
                 const result = await this.actor.getAllStaffingCards();
@@ -141,7 +147,7 @@ export class Backend implements backendInterface {
             return result;
         }
     }
-    async getAllUniversityCards(): Promise<Array<UniversityCard>> {
+    async getAllUniversityCards(): Promise<Array<UniversityBoardCard>> {
         if (this.processError) {
             try {
                 const result = await this.actor.getAllUniversityCards();
@@ -169,7 +175,7 @@ export class Backend implements backendInterface {
             return result;
         }
     }
-    async saveAllStaffingCards(arg0: Array<StaffingCard>): Promise<void> {
+    async saveAllStaffingCards(arg0: Array<StaffingBoardCard>): Promise<void> {
         if (this.processError) {
             try {
                 const result = await this.actor.saveAllStaffingCards(arg0);
@@ -183,7 +189,7 @@ export class Backend implements backendInterface {
             return result;
         }
     }
-    async saveAllUniversityCards(arg0: Array<UniversityCard>): Promise<void> {
+    async saveAllUniversityCards(arg0: Array<UniversityBoardCard>): Promise<void> {
         if (this.processError) {
             try {
                 const result = await this.actor.saveAllUniversityCards(arg0);
