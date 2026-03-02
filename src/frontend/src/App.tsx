@@ -8,7 +8,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Toaster } from "@/components/ui/sonner";
-import { GripVertical, Loader2, Lock, Plus, Unlock } from "lucide-react";
+import {
+  Camera,
+  GripVertical,
+  Loader2,
+  Lock,
+  Plus,
+  Unlock,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useActor } from "./hooks/useActor";
@@ -33,6 +40,11 @@ interface LocalUniversityCard {
   col: string;
   createdBy: string;
   createdAt: string;
+  // Assignment-specific fields (optional — course cards don't have these)
+  assignmentTitle?: string;
+  course?: string;
+  dueDate?: string;
+  week?: number; // 1–8 for the drop list
 }
 
 interface ColSection {
@@ -83,17 +95,19 @@ const STAFFING_COLS: ColConfig[] = [
 ];
 
 const SNHU_COLS: ColConfig[] = [
+  { key: "cur", title: "Current Term", sections: null, dropKey: "cur_term" },
+  { key: "up", title: "Upcoming Term", sections: null, dropKey: "up_term" },
   {
-    key: "cur",
-    title: "Current Term",
+    key: "ca",
+    title: "Current Assignments",
     sections: [
-      { key: "cur_pending", title: "Assignments Pending" },
-      { key: "cur_progress", title: "In Progress Assignments" },
+      { key: "ca_not_started", title: "Not Started" },
+      { key: "ca_in_progress", title: "In Progress" },
     ],
   },
-  { key: "up", title: "Upcoming Term", sections: null, dropKey: "up_term" },
-  { key: "na", title: "Not Assigned", sections: null, dropKey: "snhu_na" },
 ];
+
+const WEEK_KEYS = [1, 2, 3, 4, 5, 6, 7, 8].map((w) => `ca_week_${w}`);
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -147,15 +161,26 @@ function migrateStaffingCol(oldCol: string): string {
 }
 
 function migrateSnhuCol(oldCol: string): string {
-  const valid = new Set(["cur_pending", "cur_progress", "up_term", "snhu_na"]);
+  const valid = new Set([
+    "cur_term",
+    "up_term",
+    "ca_not_started",
+    "ca_in_progress",
+    ...WEEK_KEYS,
+  ]);
   if (valid.has(oldCol)) return oldCol;
+  // Old keys → new keys
+  if (oldCol === "cur_pending" || oldCol === "cur_progress") return "cur_term";
   if (oldCol === "up_pending" || oldCol === "up_progress") return "up_term";
-  return "snhu_na";
+  if (oldCol === "snhu_na") return "ca_not_started";
+  return "ca_not_started";
 }
 
 // ─── Default Data ─────────────────────────────────────────────────────────────
 
 const LOGIN_NAME = "migudavc";
+const LS_STAFFING_KEY = `swb_staffing_${LOGIN_NAME}`;
+const LS_UNIVERSITY_KEY = `swb_university_${LOGIN_NAME}`;
 
 function miguelCard(): LocalStaffingCard {
   return {
@@ -177,7 +202,7 @@ function snhuCanonicalCards(): LocalUniversityCard[] {
       id: "snhu-eng190",
       title: "ENG 190: Research and Persuasion",
       term: "C-2 Term - March thru April 2026",
-      col: "snhu_na",
+      col: "ca_not_started",
       createdBy: LOGIN_NAME,
       createdAt: now,
     },
@@ -185,7 +210,7 @@ function snhuCanonicalCards(): LocalUniversityCard[] {
       id: "snhu-ids105",
       title: "IDS 105: Awareness and Online Learning",
       term: "C-2 Term - March thru April 2026",
-      col: "snhu_na",
+      col: "ca_not_started",
       createdBy: LOGIN_NAME,
       createdAt: now,
     },
@@ -193,7 +218,7 @@ function snhuCanonicalCards(): LocalUniversityCard[] {
       id: "snhu-eco202",
       title: "ECO 202: Macroeconomics",
       term: "C-3 Term - May thru June 2026",
-      col: "snhu_na",
+      col: "ca_not_started",
       createdBy: LOGIN_NAME,
       createdAt: now,
     },
@@ -201,7 +226,7 @@ function snhuCanonicalCards(): LocalUniversityCard[] {
       id: "snhu-phl260",
       title: "PHL 260: Ethical Decision-Making & Problem-Solving",
       term: "C-3 Term - May thru June 2026",
-      col: "snhu_na",
+      col: "ca_not_started",
       createdBy: LOGIN_NAME,
       createdAt: now,
     },
@@ -221,7 +246,7 @@ function normalizeSnhuCards(
 
   for (const canon of canonical) {
     const existing = existingById.get(canon.id);
-    result.push({ ...canon, col: existing?.col ?? "snhu_na" });
+    result.push({ ...canon, col: existing?.col ?? "ca_not_started" });
   }
 
   for (const c of cards) {
@@ -242,6 +267,7 @@ interface TopBarProps {
   isLocked: boolean;
   onLock: () => void;
   onRequestUnlock: () => void;
+  headCount: number;
 }
 
 function TopBar({
@@ -251,6 +277,7 @@ function TopBar({
   isLocked,
   onLock,
   onRequestUnlock,
+  headCount,
 }: TopBarProps) {
   const [liveTime, setLiveTime] = useState(liveClockStr);
 
@@ -317,7 +344,7 @@ function TopBar({
           </div>
         </div>
 
-        {/* Right: lock/unlock */}
+        {/* Right: lock/unlock + HC */}
         <div className="flex flex-col items-end gap-2">
           {isLocked ? (
             <button
@@ -352,9 +379,134 @@ function TopBar({
               Lock
             </button>
           )}
+          <div
+            style={{
+              fontSize: 16,
+              color: "var(--text-muted)",
+              fontWeight: 700,
+              letterSpacing: "0.3px",
+            }}
+          >
+            HC: {headCount}
+          </div>
         </div>
       </div>
     </header>
+  );
+}
+
+// ─── MiguelPhotoUpload ────────────────────────────────────────────────────────
+
+const MIGUEL_PHOTO_KEY = "miguel_photo";
+
+interface MiguelPhotoUploadProps {
+  photoDataUrl: string | null;
+  onPhotoChange: (dataUrl: string) => void;
+}
+
+function MiguelPhotoUpload({
+  photoDataUrl,
+  onPhotoChange,
+}: MiguelPhotoUploadProps) {
+  const [hovered, setHovered] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function handleClick() {
+    fileInputRef.current?.click();
+  }
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      onPhotoChange(dataUrl);
+    };
+    reader.readAsDataURL(file);
+    // Reset input so same file can be re-selected
+    e.target.value = "";
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      title={photoDataUrl ? "Click to change photo" : "Click to upload photo"}
+      aria-label={
+        photoDataUrl ? "Change profile photo" : "Upload profile photo"
+      }
+      style={{
+        width: 56,
+        height: 56,
+        flexShrink: 0,
+        borderRadius: 12,
+        border: photoDataUrl
+          ? "1px solid rgba(255,255,255,0.18)"
+          : "1.5px dashed rgba(255,255,255,0.30)",
+        background: photoDataUrl ? "transparent" : "rgba(255,255,255,0.06)",
+        cursor: "pointer",
+        overflow: "hidden",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        position: "relative",
+        transition: "border-color 0.15s, background 0.15s",
+        padding: 0,
+      }}
+    >
+      {photoDataUrl ? (
+        <>
+          <img
+            src={photoDataUrl}
+            alt="Miguel A Davalos"
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              display: "block",
+              transition: "opacity 0.15s",
+              opacity: hovered ? 0.55 : 1,
+            }}
+          />
+          {hovered && (
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                pointerEvents: "none",
+              }}
+            >
+              <Camera size={18} style={{ color: "rgba(255,255,255,0.9)" }} />
+            </div>
+          )}
+        </>
+      ) : (
+        <Camera
+          size={20}
+          style={{
+            color: hovered
+              ? "rgba(255,255,255,0.75)"
+              : "rgba(255,255,255,0.40)",
+            transition: "color 0.15s",
+          }}
+        />
+      )}
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleFileChange}
+        style={{ display: "none" }}
+        aria-label="Upload photo"
+      />
+    </button>
   );
 }
 
@@ -364,13 +516,19 @@ interface StaffingCardViewProps {
   card: LocalStaffingCard;
   isLocked: boolean;
   onDragStart: (e: React.DragEvent, cardId: string) => void;
+  miguelPhoto: string | null;
+  onMiguelPhotoChange: (dataUrl: string) => void;
 }
 
 function StaffingCardView({
   card,
   isLocked,
   onDragStart,
+  miguelPhoto,
+  onMiguelPhotoChange,
 }: StaffingCardViewProps) {
+  const isMiguel = card.login === "migudavc";
+
   return (
     <div
       className="glass-card rounded-2xl no-select transition-shadow"
@@ -383,8 +541,24 @@ function StaffingCardView({
         cursor: isLocked ? "default" : "grab",
       }}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
+      <div className="flex items-center justify-between gap-2">
+        {/* Photo upload square — only for Miguel */}
+        {isMiguel && (
+          <div
+            // Prevent drag from starting when clicking the photo area
+            draggable={false}
+            onDragStart={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            style={{ flexShrink: 0 }}
+          >
+            <MiguelPhotoUpload
+              photoDataUrl={miguelPhoto}
+              onPhotoChange={onMiguelPhotoChange}
+            />
+          </div>
+        )}
+
+        <div className="min-w-0 flex-1">
           <p
             className="font-bold truncate m-0"
             style={{ fontSize: 14, color: "var(--text-primary)" }}
@@ -425,6 +599,8 @@ function UniversityCardView({
   isLocked,
   onDragStart,
 }: UniversityCardViewProps) {
+  const isAssignment = Boolean(card.assignmentTitle);
+
   return (
     <div
       className="glass-card rounded-2xl no-select transition-shadow"
@@ -438,19 +614,39 @@ function UniversityCardView({
       }}
     >
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p
             className="font-bold m-0"
             style={{ fontSize: 14, color: "var(--text-primary)" }}
           >
-            {card.title}
+            {isAssignment ? card.assignmentTitle : card.title}
           </p>
-          <div
-            className="mt-1"
-            style={{ fontSize: 13, color: "rgba(255,255,255,0.82)" }}
-          >
-            {card.term}
-          </div>
+          {isAssignment ? (
+            <div className="flex flex-col gap-0.5 mt-1">
+              {card.course && (
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.75)" }}>
+                  Course: {card.course}
+                </div>
+              )}
+              {card.term && (
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.75)" }}>
+                  Term: {card.term}
+                </div>
+              )}
+              {card.dueDate && (
+                <div style={{ fontSize: 12, color: "rgba(255,200,80,0.85)" }}>
+                  Due: {card.dueDate}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div
+              className="mt-1"
+              style={{ fontSize: 13, color: "rgba(255,255,255,0.82)" }}
+            >
+              {card.term}
+            </div>
+          )}
         </div>
         {!isLocked && (
           <GripVertical
@@ -516,7 +712,7 @@ function DropBucket({
             {label}
           </span>
           <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-            {count}
+            {count > 0 ? count : ""}
           </span>
         </div>
       )}
@@ -543,35 +739,26 @@ function DropBucket({
   );
 }
 
-// ─── AddAssociateModal ────────────────────────────────────────────────────────
+// ─── AddCourseModal ───────────────────────────────────────────────────────────
 
-interface AddAssociateModalProps {
+interface AddCourseModalProps {
   open: boolean;
   onClose: () => void;
   onAdd: (
-    card: Omit<LocalStaffingCard, "id" | "createdAt" | "col" | "createdBy">,
+    card: Omit<LocalUniversityCard, "id" | "createdAt" | "col" | "createdBy">,
   ) => void;
 }
 
-function AddAssociateModal({ open, onClose, onAdd }: AddAssociateModalProps) {
-  const [personName, setPersonName] = useState("");
-  const [login, setLogin] = useState("");
-  const [shiftCoHost, setShiftCoHost] = useState("");
-  const [shiftPattern, setShiftPattern] = useState("");
+function AddCourseModal({ open, onClose, onAdd }: AddCourseModalProps) {
+  const [title, setTitle] = useState("");
+  const [term, setTerm] = useState("");
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!personName.trim() || !login.trim()) return;
-    onAdd({
-      personName: personName.trim(),
-      login: login.trim(),
-      shiftCoHost: shiftCoHost.trim(),
-      shiftPattern: shiftPattern.trim(),
-    });
-    setPersonName("");
-    setLogin("");
-    setShiftCoHost("");
-    setShiftPattern("");
+    if (!title.trim()) return;
+    onAdd({ title: title.trim(), term: term.trim() });
+    setTitle("");
+    setTerm("");
     onClose();
   }
 
@@ -599,54 +786,31 @@ function AddAssociateModal({ open, onClose, onAdd }: AddAssociateModalProps) {
           <DialogTitle
             style={{ fontSize: 15, color: "rgba(255,255,255,0.92)" }}
           >
-            Add Associate
+            Add Course
           </DialogTitle>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-3 mt-1">
           <div className="flex flex-col gap-1.5">
             <Label style={{ fontSize: 12, color: "var(--text-muted)" }}>
-              Person Name *
+              Course Title *
             </Label>
             <Input
-              value={personName}
-              onChange={(e) => setPersonName(e.target.value)}
-              placeholder="Full name"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. MAT 140: Precalculus"
               required
               style={inputStyle}
             />
           </div>
           <div className="flex flex-col gap-1.5">
             <Label style={{ fontSize: 12, color: "var(--text-muted)" }}>
-              Login *
+              Term
             </Label>
             <Input
-              value={login}
-              onChange={(e) => setLogin(e.target.value)}
-              placeholder="e.g. migudavc"
-              required
-              style={inputStyle}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label style={{ fontSize: 12, color: "var(--text-muted)" }}>
-              Shift / Co-Host
-            </Label>
-            <Input
-              value={shiftCoHost}
-              onChange={(e) => setShiftCoHost(e.target.value)}
-              placeholder="e.g. DB3T0700"
-              style={inputStyle}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label style={{ fontSize: 12, color: "var(--text-muted)" }}>
-              Shift Pattern
-            </Label>
-            <Input
-              value={shiftPattern}
-              onChange={(e) => setShiftPattern(e.target.value)}
-              placeholder="e.g. Back Half Days"
+              value={term}
+              onChange={(e) => setTerm(e.target.value)}
+              placeholder="e.g. C-4 Term - July thru August 2026"
               style={inputStyle}
             />
           </div>
@@ -681,6 +845,266 @@ function AddAssociateModal({ open, onClose, onAdd }: AddAssociateModalProps) {
             </button>
           </DialogFooter>
         </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── AddAssignmentModal ───────────────────────────────────────────────────────
+
+interface AddAssignmentModalProps {
+  open: boolean;
+  onClose: () => void;
+  onAdd: (
+    card: Omit<LocalUniversityCard, "id" | "createdAt" | "col" | "createdBy">,
+  ) => void;
+}
+
+function AddAssignmentModal({ open, onClose, onAdd }: AddAssignmentModalProps) {
+  const [assignmentTitle, setAssignmentTitle] = useState("");
+  const [course, setCourse] = useState("");
+  const [term, setTerm] = useState("");
+  const [dueDate, setDueDate] = useState("");
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!assignmentTitle.trim()) return;
+    onAdd({
+      title: assignmentTitle.trim(), // keep title field for compatibility
+      assignmentTitle: assignmentTitle.trim(),
+      course: course.trim(),
+      term: term.trim(),
+      dueDate: dueDate.trim(),
+    });
+    setAssignmentTitle("");
+    setCourse("");
+    setTerm("");
+    setDueDate("");
+    onClose();
+  }
+
+  const inputStyle: React.CSSProperties = {
+    background: "rgba(255,255,255,0.06)",
+    border: "1px solid rgba(255,255,255,0.14)",
+    color: "rgba(255,255,255,0.92)",
+    borderRadius: 12,
+    fontSize: 14,
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent
+        className="border-0 max-w-md"
+        style={{
+          background: "rgba(18,26,51,0.97)",
+          border: "1px solid rgba(255,255,255,0.18)",
+          borderRadius: 18,
+          boxShadow: "var(--shadow-modal)",
+          color: "rgba(255,255,255,0.92)",
+        }}
+      >
+        <DialogHeader>
+          <DialogTitle
+            style={{ fontSize: 15, color: "rgba(255,255,255,0.92)" }}
+          >
+            Add Assignment
+          </DialogTitle>
+        </DialogHeader>
+
+        <form onSubmit={handleSubmit} className="flex flex-col gap-3 mt-1">
+          <div className="flex flex-col gap-1.5">
+            <Label style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              Assignment Title *
+            </Label>
+            <Input
+              value={assignmentTitle}
+              onChange={(e) => setAssignmentTitle(e.target.value)}
+              placeholder="e.g. Week 1 Discussion Post"
+              required
+              style={inputStyle}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              Course
+            </Label>
+            <Input
+              value={course}
+              onChange={(e) => setCourse(e.target.value)}
+              placeholder="e.g. ENG 190: Research and Persuasion"
+              style={inputStyle}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              Term
+            </Label>
+            <Input
+              value={term}
+              onChange={(e) => setTerm(e.target.value)}
+              placeholder="e.g. C-2 Term - March thru April 2026"
+              style={inputStyle}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              Due Date
+            </Label>
+            <Input
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
+              placeholder="e.g. March 15, 2026"
+              style={inputStyle}
+            />
+          </div>
+
+          <DialogFooter className="mt-1 gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl text-sm transition-colors"
+              style={{
+                background: "rgba(255,255,255,0.06)",
+                border: "1px solid rgba(255,255,255,0.12)",
+                color: "rgba(255,255,255,0.75)",
+                padding: "8px 14px",
+                cursor: "pointer",
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="rounded-xl text-sm font-semibold transition-colors"
+              style={{
+                background: "var(--btn-primary)",
+                border: "1px solid var(--btn-primary-border)",
+                color: "var(--btn-primary-text)",
+                padding: "8px 18px",
+                cursor: "pointer",
+              }}
+            >
+              Add Assignment
+            </button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── DeleteCourseModal ────────────────────────────────────────────────────────
+
+interface DeleteCourseModalProps {
+  open: boolean;
+  cards: LocalUniversityCard[];
+  onClose: () => void;
+  onDelete: (cardId: string) => void;
+}
+
+function DeleteCourseModal({
+  open,
+  cards,
+  onClose,
+  onDelete,
+}: DeleteCourseModalProps) {
+  const [selectedId, setSelectedId] = useState("");
+
+  function handleDelete() {
+    if (!selectedId) return;
+    onDelete(selectedId);
+    setSelectedId("");
+    onClose();
+  }
+
+  const inputStyle: React.CSSProperties = {
+    background: "rgba(255,255,255,0.06)",
+    border: "1px solid rgba(255,255,255,0.14)",
+    color: "rgba(255,255,255,0.92)",
+    borderRadius: 12,
+    fontSize: 14,
+    width: "100%",
+    padding: "10px 12px",
+    outline: "none",
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent
+        className="border-0 max-w-md"
+        style={{
+          background: "rgba(18,26,51,0.97)",
+          border: "1px solid rgba(255,255,255,0.18)",
+          borderRadius: 18,
+          boxShadow: "var(--shadow-modal)",
+          color: "rgba(255,255,255,0.92)",
+        }}
+      >
+        <DialogHeader>
+          <DialogTitle
+            style={{ fontSize: 15, color: "rgba(255,255,255,0.92)" }}
+          >
+            Delete Course
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="flex flex-col gap-3 mt-1">
+          <div className="flex flex-col gap-1.5">
+            <Label style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              Select course to delete
+            </Label>
+            <select
+              value={selectedId}
+              onChange={(e) => setSelectedId(e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">-- Choose a course --</option>
+              {cards.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.title}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <DialogFooter className="mt-1 gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl text-sm transition-colors"
+              style={{
+                background: "rgba(255,255,255,0.06)",
+                border: "1px solid rgba(255,255,255,0.12)",
+                color: "rgba(255,255,255,0.75)",
+                padding: "8px 14px",
+                cursor: "pointer",
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={!selectedId}
+              className="rounded-xl text-sm font-semibold transition-colors"
+              style={{
+                background: selectedId
+                  ? "rgba(255,77,77,0.18)"
+                  : "rgba(255,255,255,0.05)",
+                border: selectedId
+                  ? "1px solid rgba(255,77,77,0.4)"
+                  : "1px solid rgba(255,255,255,0.10)",
+                color: selectedId
+                  ? "rgba(255,120,120,0.95)"
+                  : "rgba(255,255,255,0.3)",
+                padding: "8px 18px",
+                cursor: selectedId ? "pointer" : "not-allowed",
+              }}
+            >
+              Delete
+            </button>
+          </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -767,14 +1191,18 @@ interface StaffingBoardProps {
   cards: LocalStaffingCard[];
   isLocked: boolean;
   onMove: (cardId: string, newCol: string) => void;
-  onAdd: (
-    card: Omit<LocalStaffingCard, "id" | "createdAt" | "col" | "createdBy">,
-  ) => void;
+  miguelPhoto: string | null;
+  onMiguelPhotoChange: (dataUrl: string) => void;
 }
 
-function StaffingBoard({ cards, isLocked, onMove, onAdd }: StaffingBoardProps) {
+function StaffingBoard({
+  cards,
+  isLocked,
+  onMove,
+  miguelPhoto,
+  onMiguelPhotoChange,
+}: StaffingBoardProps) {
   const [dragOverId, setDragOverId] = useState<string | null>(null);
-  const [addOpen, setAddOpen] = useState(false);
 
   const buckets = useMemo(() => {
     const m: Record<string, LocalStaffingCard[]> = {};
@@ -820,28 +1248,6 @@ function StaffingBoard({ cards, isLocked, onMove, onAdd }: StaffingBoardProps) {
 
   return (
     <>
-      {/* Add Associate button */}
-      {!isLocked && (
-        <div className="flex justify-end mb-2 mt-3">
-          <button
-            type="button"
-            onClick={() => setAddOpen(true)}
-            className="flex items-center gap-1.5 text-xs rounded-xl transition-colors"
-            style={{
-              background: "var(--btn-primary)",
-              border: "1px solid var(--btn-primary-border)",
-              color: "var(--btn-primary-text)",
-              padding: "7px 14px",
-              cursor: "pointer",
-              fontWeight: 600,
-            }}
-          >
-            <Plus size={13} />
-            Add Associate
-          </button>
-        </div>
-      )}
-
       <div
         className="board-grid mt-3"
         style={{
@@ -878,7 +1284,7 @@ function StaffingBoard({ cards, isLocked, onMove, onAdd }: StaffingBoardProps) {
                   {col.title}
                 </h2>
                 <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                  {colCount}
+                  {colCount > 0 ? colCount : ""}
                 </span>
               </div>
 
@@ -905,6 +1311,8 @@ function StaffingBoard({ cards, isLocked, onMove, onAdd }: StaffingBoardProps) {
                           card={card}
                           isLocked={isLocked}
                           onDragStart={onDragStart}
+                          miguelPhoto={miguelPhoto}
+                          onMiguelPhotoChange={onMiguelPhotoChange}
                         />
                       ))}
                     </DropBucket>
@@ -926,6 +1334,8 @@ function StaffingBoard({ cards, isLocked, onMove, onAdd }: StaffingBoardProps) {
                         card={card}
                         isLocked={isLocked}
                         onDragStart={onDragStart}
+                        miguelPhoto={miguelPhoto}
+                        onMiguelPhotoChange={onMiguelPhotoChange}
                       />
                     ))}
                   </DropBucket>
@@ -935,13 +1345,115 @@ function StaffingBoard({ cards, isLocked, onMove, onAdd }: StaffingBoardProps) {
           );
         })}
       </div>
-
-      <AddAssociateModal
-        open={addOpen}
-        onClose={() => setAddOpen(false)}
-        onAdd={onAdd}
-      />
     </>
+  );
+}
+
+// ─── WeekSelector ────────────────────────────────────────────────────────────
+
+interface WeekSelectorProps {
+  selectedWeek: number | null;
+  onSelect: (week: number | null) => void;
+  buckets: Record<string, LocalUniversityCard[]>;
+}
+
+function WeekSelector({ selectedWeek, onSelect, buckets }: WeekSelectorProps) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 6,
+        padding: "8px 4px 4px",
+      }}
+    >
+      <span
+        style={{
+          fontSize: 11,
+          fontWeight: 700,
+          color: "rgba(255,255,255,0.45)",
+          letterSpacing: "0.5px",
+          textTransform: "uppercase",
+        }}
+      >
+        Week
+      </span>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          justifyContent: "center",
+          gap: 5,
+        }}
+      >
+        {[1, 2, 3, 4, 5, 6, 7, 8].map((w) => {
+          const wKey = `ca_week_${w}`;
+          const count = buckets[wKey]?.length ?? 0;
+          const isActive = selectedWeek === w;
+          return (
+            <button
+              key={w}
+              type="button"
+              onClick={() => onSelect(isActive ? null : w)}
+              title={
+                count > 0
+                  ? `Week ${w} — ${count} item${count !== 1 ? "s" : ""}`
+                  : `Week ${w}`
+              }
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 10,
+                border: isActive
+                  ? "1.5px solid rgba(29,185,84,0.6)"
+                  : "1px solid rgba(255,255,255,0.14)",
+                background: isActive
+                  ? "rgba(29,185,84,0.18)"
+                  : "rgba(255,255,255,0.05)",
+                color: isActive
+                  ? "rgba(29,220,100,0.95)"
+                  : "rgba(255,255,255,0.70)",
+                fontSize: 13,
+                fontWeight: isActive ? 700 : 500,
+                cursor: "pointer",
+                position: "relative",
+                transition: "background 0.15s, border-color 0.15s, color 0.15s",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              {w}
+              {count > 0 && (
+                <span
+                  style={{
+                    position: "absolute",
+                    top: -4,
+                    right: -4,
+                    width: 14,
+                    height: 14,
+                    borderRadius: "50%",
+                    background: isActive
+                      ? "rgba(29,185,84,0.8)"
+                      : "rgba(255,255,255,0.25)",
+                    fontSize: 9,
+                    fontWeight: 700,
+                    color: isActive ? "#fff" : "rgba(255,255,255,0.9)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    lineHeight: 1,
+                  }}
+                >
+                  {count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -951,18 +1463,39 @@ interface SnhuBoardProps {
   cards: LocalUniversityCard[];
   isLocked: boolean;
   onMove: (cardId: string, newCol: string) => void;
+  onAdd: (
+    card: Omit<LocalUniversityCard, "id" | "createdAt" | "col" | "createdBy">,
+  ) => void;
+  onAddAssignment: (
+    card: Omit<LocalUniversityCard, "id" | "createdAt" | "col" | "createdBy">,
+  ) => void;
+  onDelete: (cardId: string) => void;
 }
 
-function SnhuBoard({ cards, isLocked, onMove }: SnhuBoardProps) {
+function SnhuBoard({
+  cards,
+  isLocked,
+  onMove,
+  onAdd,
+  onAddAssignment,
+  onDelete,
+}: SnhuBoardProps) {
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [addAssignOpen, setAddAssignOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [selectedWeek, setSelectedWeek] = useState<number | null>(null);
 
   const buckets = useMemo(() => {
     const m: Record<string, LocalUniversityCard[]> = {
-      cur_pending: [],
-      cur_progress: [],
+      cur_term: [],
       up_term: [],
-      snhu_na: [],
+      ca_not_started: [],
+      ca_in_progress: [],
     };
+    // initialize week buckets
+    for (const wk of WEEK_KEYS) m[wk] = [];
+
     for (const c of cards) {
       if (!m[c.col]) m[c.col] = [];
       m[c.col].push(c);
@@ -999,97 +1532,203 @@ function SnhuBoard({ cards, isLocked, onMove }: SnhuBoardProps) {
     setDragOverId(null);
   }
 
+  function renderCards(bucketKey: string) {
+    return (buckets[bucketKey] ?? []).map((card) => (
+      <UniversityCardView
+        key={card.id}
+        card={card}
+        isLocked={isLocked}
+        onDragStart={onDragStart}
+      />
+    ));
+  }
+
   return (
-    <div
-      className="board-grid-3 mt-3"
-      style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(3, 1fr)",
-        gap: 12,
-      }}
-    >
-      {SNHU_COLS.map((col) => {
-        const colCount = col.sections
-          ? col.sections.reduce(
-              (sum, s) => sum + (buckets[s.key]?.length ?? 0),
-              0,
-            )
-          : (buckets[col.dropKey ?? ""]?.length ?? 0);
-
-        return (
-          <div
-            key={col.key}
-            className="glass-panel rounded-2xl overflow-hidden flex flex-col"
-            style={{ boxShadow: "var(--shadow-panel)", minHeight: 420 }}
+    <>
+      {/* Top action bar */}
+      {!isLocked && (
+        <div className="flex justify-end gap-2 mb-2 mt-3">
+          <button
+            type="button"
+            onClick={() => setDeleteOpen(true)}
+            className="flex items-center gap-1.5 text-xs rounded-xl transition-colors"
+            style={{
+              background: "rgba(255,77,77,0.14)",
+              border: "1px solid rgba(255,77,77,0.35)",
+              color: "rgba(255,120,120,0.9)",
+              padding: "7px 14px",
+              cursor: "pointer",
+              fontWeight: 600,
+            }}
           >
-            <div
-              className="flex items-center justify-between"
-              style={{
-                padding: "12px 12px 10px",
-                borderBottom: "1px solid rgba(255,255,255,0.12)",
-              }}
-            >
-              <h2
-                className="m-0 font-semibold"
-                style={{ fontSize: 14, color: "var(--text-primary)" }}
-              >
-                {col.title}
-              </h2>
-              <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                {colCount}
-              </span>
-            </div>
+            Delete Course
+          </button>
+          <button
+            type="button"
+            onClick={() => setAddOpen(true)}
+            className="flex items-center gap-1.5 text-xs rounded-xl transition-colors"
+            style={{
+              background: "var(--btn-primary)",
+              border: "1px solid var(--btn-primary-border)",
+              color: "var(--btn-primary-text)",
+              padding: "7px 14px",
+              cursor: "pointer",
+              fontWeight: 600,
+            }}
+          >
+            <Plus size={13} />
+            Add Course
+          </button>
+        </div>
+      )}
 
-            <div className="flex flex-col gap-2 flex-1" style={{ padding: 12 }}>
-              {col.sections ? (
-                col.sections.map((sec) => (
+      <div
+        className="board-grid-3 mt-3"
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3, 1fr)",
+          gap: 12,
+          alignItems: "start",
+        }}
+      >
+        {SNHU_COLS.map((col) => {
+          const colCount = col.sections
+            ? col.sections.reduce(
+                (sum, s) => sum + (buckets[s.key]?.length ?? 0),
+                0,
+              )
+            : (buckets[col.dropKey ?? ""]?.length ?? 0);
+
+          const isCurrentAssignments = col.key === "ca";
+
+          return (
+            <div
+              key={col.key}
+              className="glass-panel rounded-2xl overflow-hidden flex flex-col"
+              style={{ boxShadow: "var(--shadow-panel)", minHeight: 420 }}
+            >
+              {/* Column header — Add Assignment button inline for Current Assignments */}
+              <div
+                className="flex items-center justify-between"
+                style={{
+                  padding: "12px 12px 10px",
+                  borderBottom: "1px solid rgba(255,255,255,0.12)",
+                }}
+              >
+                <h2
+                  className="m-0 font-semibold"
+                  style={{ fontSize: 14, color: "var(--text-primary)" }}
+                >
+                  {col.title}
+                </h2>
+                <div className="flex items-center gap-2">
+                  {isCurrentAssignments && !isLocked && (
+                    <button
+                      type="button"
+                      onClick={() => setAddAssignOpen(true)}
+                      className="flex items-center gap-1 text-xs rounded-lg transition-colors"
+                      style={{
+                        background: "var(--btn-primary)",
+                        border: "1px solid var(--btn-primary-border)",
+                        color: "var(--btn-primary-text)",
+                        padding: "4px 10px",
+                        cursor: "pointer",
+                        fontWeight: 600,
+                      }}
+                    >
+                      <Plus size={11} />
+                      Add Assignment
+                    </button>
+                  )}
+                  <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                    {colCount > 0 ? colCount : ""}
+                  </span>
+                </div>
+              </div>
+
+              <div
+                className="flex flex-col gap-2 flex-1"
+                style={{ padding: 12 }}
+              >
+                {col.sections ? (
+                  <>
+                    {/* Week selector toggle — centered between header and sections */}
+                    <WeekSelector
+                      selectedWeek={selectedWeek}
+                      onSelect={setSelectedWeek}
+                      buckets={buckets}
+                    />
+
+                    {col.sections.map((sec) => (
+                      <DropBucket
+                        key={sec.key}
+                        bucketKey={sec.key}
+                        label={sec.title}
+                        count={buckets[sec.key]?.length ?? 0}
+                        dragOverId={dragOverId}
+                        isLocked={isLocked}
+                        onDragOver={onDragOver}
+                        onDrop={onDrop}
+                        onDragLeave={() => setDragOverId(null)}
+                      >
+                        {renderCards(sec.key)}
+                      </DropBucket>
+                    ))}
+
+                    {/* Selected week drop zone */}
+                    {selectedWeek !== null && (
+                      <DropBucket
+                        key={`ca_week_${selectedWeek}`}
+                        bucketKey={`ca_week_${selectedWeek}`}
+                        label={`Week ${selectedWeek}`}
+                        count={buckets[`ca_week_${selectedWeek}`]?.length ?? 0}
+                        dragOverId={dragOverId}
+                        isLocked={isLocked}
+                        onDragOver={onDragOver}
+                        onDrop={onDrop}
+                        onDragLeave={() => setDragOverId(null)}
+                      >
+                        {renderCards(`ca_week_${selectedWeek}`)}
+                      </DropBucket>
+                    )}
+                  </>
+                ) : (
                   <DropBucket
-                    key={sec.key}
-                    bucketKey={sec.key}
-                    label={sec.title}
-                    count={buckets[sec.key]?.length ?? 0}
+                    bucketKey={col.dropKey!}
+                    count={buckets[col.dropKey ?? ""]?.length ?? 0}
                     dragOverId={dragOverId}
                     isLocked={isLocked}
                     onDragOver={onDragOver}
                     onDrop={onDrop}
                     onDragLeave={() => setDragOverId(null)}
+                    showHeader={false}
                   >
-                    {(buckets[sec.key] ?? []).map((card) => (
-                      <UniversityCardView
-                        key={card.id}
-                        card={card}
-                        isLocked={isLocked}
-                        onDragStart={onDragStart}
-                      />
-                    ))}
+                    {renderCards(col.dropKey!)}
                   </DropBucket>
-                ))
-              ) : (
-                <DropBucket
-                  bucketKey={col.dropKey!}
-                  count={buckets[col.dropKey ?? ""]?.length ?? 0}
-                  dragOverId={dragOverId}
-                  isLocked={isLocked}
-                  onDragOver={onDragOver}
-                  onDrop={onDrop}
-                  onDragLeave={() => setDragOverId(null)}
-                  showHeader={false}
-                >
-                  {(buckets[col.dropKey ?? ""] ?? []).map((card) => (
-                    <UniversityCardView
-                      key={card.id}
-                      card={card}
-                      isLocked={isLocked}
-                      onDragStart={onDragStart}
-                    />
-                  ))}
-                </DropBucket>
-              )}
+                )}
+              </div>
             </div>
-          </div>
-        );
-      })}
-    </div>
+          );
+        })}
+      </div>
+
+      <AddCourseModal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onAdd={onAdd}
+      />
+      <AddAssignmentModal
+        open={addAssignOpen}
+        onClose={() => setAddAssignOpen(false)}
+        onAdd={onAddAssignment}
+      />
+      <DeleteCourseModal
+        open={deleteOpen}
+        cards={cards}
+        onClose={() => setDeleteOpen(false)}
+        onDelete={onDelete}
+      />
+    </>
   );
 }
 
@@ -1112,6 +1751,14 @@ export default function App() {
   const [universityCards, setUniversityCards] = useState<LocalUniversityCard[]>(
     [],
   );
+  const [miguelPhoto, setMiguelPhoto] = useState<string | null>(() =>
+    localStorage.getItem(MIGUEL_PHOTO_KEY),
+  );
+
+  function handleMiguelPhotoChange(dataUrl: string) {
+    setMiguelPhoto(dataUrl);
+    localStorage.setItem(MIGUEL_PHOTO_KEY, dataUrl);
+  }
 
   // Load from backend on mount (once actor is ready)
   const loadedRef = useRef(false);
@@ -1195,14 +1842,48 @@ export default function App() {
           localStorage.setItem("swb_lastUpdated", lu);
         }
 
+        // Sync latest data into localStorage for offline fallback
+        localStorage.setItem(LS_STAFFING_KEY, JSON.stringify(sCards));
+        localStorage.setItem(LS_UNIVERSITY_KEY, JSON.stringify(uCards));
+
         setStaffingCards(sCards);
         setUniversityCards(uCards);
         setLoaded(true);
       } catch (err) {
         console.error("Failed to load data from backend", err);
-        // Fall back to defaults
-        setStaffingCards([miguelCard()]);
-        setUniversityCards(normalizeSnhuCards([]));
+        // Try localStorage fallback before using hardcoded defaults
+        try {
+          const lsStaff = localStorage.getItem(LS_STAFFING_KEY);
+          const lsUni = localStorage.getItem(LS_UNIVERSITY_KEY);
+
+          let sCards: LocalStaffingCard[] = lsStaff
+            ? (JSON.parse(lsStaff) as LocalStaffingCard[]).map((c) => ({
+                ...c,
+                col: migrateStaffingCol(c.col),
+              }))
+            : [miguelCard()];
+
+          const hasMiguel = sCards.some(
+            (c) =>
+              c.login === "migudavc" &&
+              c.personName.toLowerCase().includes("miguel"),
+          );
+          if (!hasMiguel) sCards = [miguelCard(), ...sCards];
+
+          let uCards: LocalUniversityCard[] = lsUni
+            ? (JSON.parse(lsUni) as LocalUniversityCard[]).map((c) => ({
+                ...c,
+                col: migrateSnhuCol(c.col),
+              }))
+            : [];
+          uCards = normalizeSnhuCards(uCards);
+
+          setStaffingCards(sCards);
+          setUniversityCards(uCards);
+        } catch {
+          setStaffingCards([miguelCard()]);
+          setUniversityCards(normalizeSnhuCards([]));
+        }
         setLoaded(true);
       }
     }
@@ -1215,13 +1896,19 @@ export default function App() {
     localStorage.setItem(`swb_locked_${LOGIN_NAME}`, isLocked ? "1" : "0");
   }, [isLocked]);
 
-  // Save helper
+  // Save helpers — localStorage is primary (immediate), backend is fire-and-forget
   const saveStaffing = useCallback(
-    async (cards: LocalStaffingCard[]) => {
+    (cards: LocalStaffingCard[]) => {
+      // 1. Persist to localStorage immediately — this is the source of truth
+      localStorage.setItem(LS_STAFFING_KEY, JSON.stringify(cards));
+      const stamp = nowStamp();
+      setLastUpdated(stamp);
+      localStorage.setItem("swb_lastUpdated", stamp);
+
+      // 2. Fire-and-forget backend sync (no loading toast, no rollback on failure)
       if (!actor) return;
-      toast.loading("Saving...", { id: "saving" });
-      try {
-        await actor.saveAllStaffingCards(
+      actor
+        .saveAllStaffingCards(
           cards.map((c) => ({
             id: encodeId(c.id),
             personName: c.personName,
@@ -1232,25 +1919,27 @@ export default function App() {
             createdBy: c.createdBy,
             createdAt: c.createdAt,
           })),
-        );
-        const stamp = nowStamp();
-        await actor.setLastUpdated(stamp);
-        setLastUpdated(stamp);
-        localStorage.setItem("swb_lastUpdated", stamp);
-        toast.success("Saved.", { id: "saving" });
-      } catch {
-        toast.error("Save failed.", { id: "saving" });
-      }
+        )
+        .then(() => actor.setLastUpdated(stamp))
+        .catch(() => {
+          toast.warning("Saved locally.", { id: "save-warn", duration: 2500 });
+        });
     },
     [actor],
   );
 
   const saveUniversity = useCallback(
-    async (cards: LocalUniversityCard[]) => {
+    (cards: LocalUniversityCard[]) => {
+      // 1. Persist to localStorage immediately — this is the source of truth
+      localStorage.setItem(LS_UNIVERSITY_KEY, JSON.stringify(cards));
+      const stamp = nowStamp();
+      setLastUpdated(stamp);
+      localStorage.setItem("swb_lastUpdated", stamp);
+
+      // 2. Fire-and-forget backend sync (no loading toast, no rollback on failure)
       if (!actor) return;
-      toast.loading("Saving...", { id: "saving" });
-      try {
-        await actor.saveAllUniversityCards(
+      actor
+        .saveAllUniversityCards(
           cards.map((c) => ({
             id: encodeId(c.id),
             title: c.title,
@@ -1259,15 +1948,11 @@ export default function App() {
             createdBy: c.createdBy,
             createdAt: c.createdAt,
           })),
-        );
-        const stamp = nowStamp();
-        await actor.setLastUpdated(stamp);
-        setLastUpdated(stamp);
-        localStorage.setItem("swb_lastUpdated", stamp);
-        toast.success("Saved.", { id: "saving" });
-      } catch {
-        toast.error("Save failed.", { id: "saving" });
-      }
+        )
+        .then(() => actor.setLastUpdated(stamp))
+        .catch(() => {
+          toast.warning("Saved locally.", { id: "save-warn", duration: 2500 });
+        });
     },
     [actor],
   );
@@ -1281,28 +1966,51 @@ export default function App() {
     saveStaffing(next);
   }
 
-  function handleStaffingAdd(
-    data: Omit<LocalStaffingCard, "id" | "createdAt" | "col" | "createdBy">,
-  ) {
-    const newCard: LocalStaffingCard = {
-      ...data,
-      id: uid(),
-      col: "staff_na",
-      createdBy: LOGIN_NAME,
-      createdAt: new Date().toISOString(),
-    };
-    const next = [...staffingCards, newCard];
-    setStaffingCards(next);
-    toast.success("Associate added.");
-    saveStaffing(next);
-  }
-
   // University card handlers
   function handleUniversityMove(cardId: string, newCol: string) {
     const next = universityCards.map((c) =>
       c.id === cardId ? { ...c, col: newCol } : c,
     );
     setUniversityCards(next);
+    saveUniversity(next);
+  }
+
+  function handleUniversityAdd(
+    data: Omit<LocalUniversityCard, "id" | "createdAt" | "col" | "createdBy">,
+  ) {
+    const newCard: LocalUniversityCard = {
+      ...data,
+      id: `snhu-${uid()}`,
+      col: "ca_not_started",
+      createdBy: LOGIN_NAME,
+      createdAt: new Date().toISOString(),
+    };
+    const next = [...universityCards, newCard];
+    setUniversityCards(next);
+    toast.success("Course added.");
+    saveUniversity(next);
+  }
+
+  function handleUniversityAddAssignment(
+    data: Omit<LocalUniversityCard, "id" | "createdAt" | "col" | "createdBy">,
+  ) {
+    const newCard: LocalUniversityCard = {
+      ...data,
+      id: `assign-${uid()}`,
+      col: "ca_not_started",
+      createdBy: LOGIN_NAME,
+      createdAt: new Date().toISOString(),
+    };
+    const next = [...universityCards, newCard];
+    setUniversityCards(next);
+    toast.success("Assignment added.");
+    saveUniversity(next);
+  }
+
+  function handleUniversityDelete(cardId: string) {
+    const next = universityCards.filter((c) => c.id !== cardId);
+    setUniversityCards(next);
+    toast.success("Course deleted.");
     saveUniversity(next);
   }
 
@@ -1363,6 +2071,11 @@ export default function App() {
           isLocked={isLocked}
           onLock={handleLock}
           onRequestUnlock={handleRequestUnlock}
+          headCount={
+            activeBoard === "amazon"
+              ? staffingCards.length
+              : universityCards.length
+          }
         />
 
         <main>
@@ -1371,13 +2084,17 @@ export default function App() {
               cards={staffingCards}
               isLocked={isLocked}
               onMove={handleStaffingMove}
-              onAdd={handleStaffingAdd}
+              miguelPhoto={miguelPhoto}
+              onMiguelPhotoChange={handleMiguelPhotoChange}
             />
           ) : (
             <SnhuBoard
               cards={universityCards}
               isLocked={isLocked}
               onMove={handleUniversityMove}
+              onAdd={handleUniversityAdd}
+              onAddAssignment={handleUniversityAddAssignment}
+              onDelete={handleUniversityDelete}
             />
           )}
         </main>
