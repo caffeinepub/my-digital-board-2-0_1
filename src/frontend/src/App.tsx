@@ -2116,15 +2116,16 @@ export default function App() {
           const env = decodeLastUpdated(lu);
           setLastUpdated(env.ts || lu);
           localStorage.setItem("swb_lastUpdated", env.ts || lu);
-          // Restore UI state from backend on initial load
-          if (env.sel && Object.keys(env.sel).length > 0) {
-            setSelectedSection(env.sel);
-            selectedSectionRef.current = env.sel;
-          }
-          if (env.week !== null && env.week !== undefined) {
-            setSelectedWeek(env.week);
-            selectedWeekRef.current = env.week;
-          }
+          // Restore UI state from backend on initial load — apply all values
+          // including empty-object sel and null week so the board matches
+          // exactly what was last saved (even if that means "nothing selected").
+          const initSel = env.sel ?? {};
+          setSelectedSection(initSel);
+          selectedSectionRef.current = initSel;
+          // week can legitimately be null (no week selected)
+          const initWeek = env.week !== undefined ? env.week : null;
+          setSelectedWeek(initWeek);
+          selectedWeekRef.current = initWeek;
         }
 
         // Sync latest data into localStorage for offline fallback
@@ -2380,6 +2381,8 @@ export default function App() {
       });
       uCards = normalizeSnhuCards(uCards);
 
+      // Always apply card data — this ensures cards created/moved on Device B
+      // always appear on Device A regardless of who last wrote.
       setStaffingCards(finalStaff);
       setUniversityCards(uCards);
       localStorage.setItem(LS_STAFFING_KEY, JSON.stringify(finalStaff));
@@ -2393,12 +2396,19 @@ export default function App() {
         // Apply UI state (toggle selections) from remote UNLESS this is
         // exactly the value we last wrote ourselves — in that case our local
         // state is already up-to-date and we must not overwrite it.
+        // NOTE: We always apply card data above; this only guards against
+        // overwriting our own in-flight toggle change with a stale remote value.
         const isOwnWrite = lu === lastSavedEncodedRef.current;
         if (!isOwnWrite) {
-          setSelectedSection(env.sel ?? {});
-          setSelectedWeek(env.week ?? null);
-          selectedSectionRef.current = env.sel ?? {};
-          selectedWeekRef.current = env.week ?? null;
+          // Always apply section/week from remote — including null/empty values
+          // so that clearing a selection on one device reflects on the other.
+          const remoteSel = env.sel ?? {};
+          setSelectedSection(remoteSel);
+          selectedSectionRef.current = remoteSel;
+          // env.week can be null (no week selected) — apply it unconditionally
+          const remoteWeek = env.week !== undefined ? env.week : null;
+          setSelectedWeek(remoteWeek);
+          selectedWeekRef.current = remoteWeek;
         }
       }
     } catch {
@@ -2476,16 +2486,20 @@ export default function App() {
     // Place the new assignment into the currently selected week's Not Started
     // bucket. If no week is selected, default to week 1.
     const targetWeek = selectedWeek ?? 1;
-    // Also auto-select week 1 in the UI if nothing was selected
+    // Auto-select week 1 in the UI if nothing was selected — update refs
+    // synchronously BEFORE calling saveUniversity so the single save encodes
+    // the correct week (avoids a second racing saveUIState call).
     if (selectedWeek === null) {
       setSelectedWeek(1);
       selectedWeekRef.current = 1;
-      saveUIState(selectedSectionRef.current, 1);
+      // DO NOT call saveUIState here — saveUniversity below will encode
+      // the updated week in one atomic backend write.
     }
     const newCard: LocalUniversityCard = {
       ...data,
       id: `assign-${uid()}`,
       col: weekNotStartedKey(targetWeek),
+      week: targetWeek, // store the week number so backend encodes it correctly
       createdBy: LOGIN_NAME,
       createdAt: new Date().toISOString(),
       completed: false,
@@ -2493,6 +2507,7 @@ export default function App() {
     const next = [...universityCards, newCard];
     setUniversityCards(next);
     toast.success("Assignment added.");
+    // Single save — encodes both the card data AND the updated week UI state
     saveUniversity(next);
   }
 
