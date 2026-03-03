@@ -2185,19 +2185,19 @@ export default function App() {
   }, [isLocked]);
 
   // ─── Save tracking ────────────────────────────────────────────────────────────
-  // Monotonically-increasing counter. Every time we start a save we store the
-  // current counter value. Polls skip applying remote UI state only if a save
-  // is still in-flight (pendingSaveCount > 0). Card data is ALWAYS applied.
-  const pendingSaveCount = useRef(0);
-  // The save generation we last sent to the backend (encoded in lastUpdated).
-  // We embed this in every save so the remote end can tell "is this from me?".
+  // Unique device token — embedded in every save so polls can tell "is this from me?"
   const mySaveGen = useRef(
     `dev-${Math.random().toString(36).slice(2)}-${Date.now()}`,
   );
-  // Counter incremented for each save; embedded in lastUpdated envelope.
+  // Monotonically-increasing sequence number for our own saves
   const saveSeqRef = useRef(0);
-  // The seq number of the most recently *completed* save to the backend.
+  // Seq of the most recently *completed* save to the backend from this device
   const lastCompletedSeqRef = useRef(-1);
+  // Number of saves currently in-flight (started but not yet completed)
+  const pendingSaveCount = useRef(0);
+  // Wall-clock time (ms) of the most recently completed save — used to apply a
+  // short grace period so polls don't overwrite our fresh UI state immediately.
+  const lastSaveCompletedAtMs = useRef(0);
   // Refs to always have the latest UI state available in callbacks
   const selectedSectionRef = useRef<Record<string, string>>({});
   const selectedWeekRef = useRef<number | null>(null);
@@ -2208,16 +2208,24 @@ export default function App() {
     selectedWeekRef.current = selectedWeek;
   }, [selectedWeek]);
 
-  // Save helpers — localStorage is primary (immediate), backend is awaited
+  // ─── Save helpers ─────────────────────────────────────────────────────────────
+  // localStorage is written immediately (synchronous). Backend is async.
+  // Every completed save records its seq + wall-clock time so the poll can
+  // distinguish "my own fresh write" from "a write from another device".
+
+  const completeSave = useCallback((seq: number) => {
+    lastCompletedSeqRef.current = Math.max(lastCompletedSeqRef.current, seq);
+    lastSaveCompletedAtMs.current = Date.now();
+    pendingSaveCount.current = Math.max(0, pendingSaveCount.current - 1);
+  }, []);
+
   const saveStaffing = useCallback(
     (cards: LocalStaffingCard[]) => {
-      // 1. Persist to localStorage immediately — guarantees local persistence
       localStorage.setItem(LS_STAFFING_KEY, JSON.stringify(cards));
       const stamp = nowStamp();
       setLastUpdated(stamp);
       localStorage.setItem("swb_lastUpdated", stamp);
 
-      // 2. Save to backend
       if (!actor) return;
       pendingSaveCount.current += 1;
       const seq = ++saveSeqRef.current;
@@ -2243,30 +2251,22 @@ export default function App() {
           })),
         )
         .then(() => actor.setLastUpdated(encoded))
-        .then(() => {
-          lastCompletedSeqRef.current = Math.max(
-            lastCompletedSeqRef.current,
-            seq,
-          );
-          pendingSaveCount.current = Math.max(0, pendingSaveCount.current - 1);
-        })
+        .then(() => completeSave(seq))
         .catch(() => {
           pendingSaveCount.current = Math.max(0, pendingSaveCount.current - 1);
           toast.warning("Saved locally.", { id: "save-warn", duration: 2500 });
         });
     },
-    [actor],
+    [actor, completeSave],
   );
 
   const saveUniversity = useCallback(
     (cards: LocalUniversityCard[]) => {
-      // 1. Persist to localStorage immediately — guarantees local persistence
       localStorage.setItem(LS_UNIVERSITY_KEY, JSON.stringify(cards));
       const stamp = nowStamp();
       setLastUpdated(stamp);
       localStorage.setItem("swb_lastUpdated", stamp);
 
-      // 2. Save to backend
       if (!actor) return;
       pendingSaveCount.current += 1;
       const seq = ++saveSeqRef.current;
@@ -2298,19 +2298,13 @@ export default function App() {
           })),
         )
         .then(() => actor.setLastUpdated(encoded))
-        .then(() => {
-          lastCompletedSeqRef.current = Math.max(
-            lastCompletedSeqRef.current,
-            seq,
-          );
-          pendingSaveCount.current = Math.max(0, pendingSaveCount.current - 1);
-        })
+        .then(() => completeSave(seq))
         .catch(() => {
           pendingSaveCount.current = Math.max(0, pendingSaveCount.current - 1);
           toast.warning("Saved locally.", { id: "save-warn", duration: 2500 });
         });
     },
-    [actor],
+    [actor, completeSave],
   );
 
   // Save only UI state (selectedSection / selectedWeek) to the backend.
@@ -2325,21 +2319,20 @@ export default function App() {
       const encoded = buildEnvelope(stamp, sel, week, mySaveGen.current, seq);
       actor
         .setLastUpdated(encoded)
-        .then(() => {
-          lastCompletedSeqRef.current = Math.max(
-            lastCompletedSeqRef.current,
-            seq,
-          );
-          pendingSaveCount.current = Math.max(0, pendingSaveCount.current - 1);
-        })
+        .then(() => completeSave(seq))
         .catch(() => {
           pendingSaveCount.current = Math.max(0, pendingSaveCount.current - 1);
         });
     },
-    [actor],
+    [actor, completeSave],
   );
 
   // ─── Background polling for cross-device sync ────────────────────────────────
+  // Grace period (ms) after a completed save during which we suppress applying
+  // remote UI state, to avoid bouncing our own just-saved selection back.
+  // Card data is ALWAYS applied regardless.
+  const UI_STATE_GRACE_MS = 8_000;
+
   const fetchAndMerge = useCallback(async () => {
     if (!actor) return;
 
@@ -2350,26 +2343,19 @@ export default function App() {
         actor.getLastUpdated(),
       ]);
 
-      // If a save started while we were fetching, skip this poll entirely —
-      // the save's own setLastUpdated will store the freshest state.
-      if (pendingSaveCount.current > 0) return;
+      // ── Card data: ALWAYS apply — never skip due to pending saves ──────────
+      const sCards: LocalStaffingCard[] = rawStaff.map((c) => ({
+        id: decodeId(c.id),
+        personName: c.personName,
+        login: c.login,
+        shiftCoHost: c.shiftCoHost,
+        shiftPattern: c.shiftPattern,
+        col: migrateStaffingCol(c.col),
+        createdBy: c.createdBy,
+        createdAt: c.createdAt,
+        status: (c.status === "IN" ? "IN" : "OUT") as "IN" | "OUT",
+      }));
 
-      const sCards: LocalStaffingCard[] = rawStaff.map((c) => {
-        const id = decodeId(c.id);
-        return {
-          id,
-          personName: c.personName,
-          login: c.login,
-          shiftCoHost: c.shiftCoHost,
-          shiftPattern: c.shiftPattern,
-          col: migrateStaffingCol(c.col),
-          createdBy: c.createdBy,
-          createdAt: c.createdAt,
-          status: (c.status === "IN" ? "IN" : "OUT") as "IN" | "OUT",
-        };
-      });
-
-      // Ensure Miguel is always present
       const hasMiguel = sCards.some(
         (c) =>
           c.login === "migudavc" &&
@@ -2399,15 +2385,14 @@ export default function App() {
       });
       uCards = normalizeSnhuCards(uCards);
 
-      // Always apply card data — this ensures cards created/moved on Device B
-      // always appear on Device A regardless of who last wrote.
+      // Apply card data unconditionally
       setStaffingCards(finalStaff);
       setUniversityCards(uCards);
       localStorage.setItem(LS_STAFFING_KEY, JSON.stringify(finalStaff));
       localStorage.setItem(LS_UNIVERSITY_KEY, JSON.stringify(uCards));
 
+      // ── UI state: apply unless we just saved it from this device ──────────
       if (lu) {
-        // Parse the envelope — support both legacy plain strings and new JSON
         let env: UIStateEnvelope & { dev?: string; seq?: number };
         try {
           const parsed = JSON.parse(lu);
@@ -2422,19 +2407,27 @@ export default function App() {
         setLastUpdated(env.ts || lu);
         localStorage.setItem("swb_lastUpdated", env.ts || lu);
 
-        // Only skip applying remote UI state if the remote value came from THIS
-        // device (same dev token) AND has a seq <= what we've already completed.
-        // In all other cases — including writes from another device — apply it.
+        // Decide whether to apply the remote UI state.
+        // Skip only when ALL THREE are true:
+        //   1. The write came from THIS device (same dev token)
+        //   2. Its seq is within what we've already written
+        //   3. We completed a save within the grace window
+        //      (so the backend still reflects our latest selection)
         const isFromThisDevice = env.dev === mySaveGen.current;
         const remoteSeq = typeof env.seq === "number" ? env.seq : -1;
-        const shouldApplyUIState =
-          !isFromThisDevice || remoteSeq > lastCompletedSeqRef.current;
+        const withinGrace =
+          Date.now() - lastSaveCompletedAtMs.current < UI_STATE_GRACE_MS;
+        const isOurOwnFreshWrite =
+          isFromThisDevice &&
+          remoteSeq <= lastCompletedSeqRef.current &&
+          withinGrace;
 
-        if (shouldApplyUIState) {
+        if (!isOurOwnFreshWrite) {
           const remoteSel = env.sel ?? {};
           setSelectedSection(remoteSel);
           selectedSectionRef.current = remoteSel;
-          const remoteWeek = env.week !== undefined ? env.week : null;
+          const remoteWeek =
+            env.week !== undefined && env.week !== null ? env.week : null;
           setSelectedWeek(remoteWeek);
           selectedWeekRef.current = remoteWeek;
         }
