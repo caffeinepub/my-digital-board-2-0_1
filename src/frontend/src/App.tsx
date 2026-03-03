@@ -10,6 +10,8 @@ import { Label } from "@/components/ui/label";
 import { Toaster } from "@/components/ui/sonner";
 import {
   Camera,
+  CheckCircle2,
+  Circle,
   GripVertical,
   Loader2,
   Lock,
@@ -46,6 +48,7 @@ interface LocalUniversityCard {
   course?: string;
   dueDate?: string;
   week?: number; // 1–8 for the drop list
+  completed?: boolean; // encoded in the week backend string as "N:done"
 }
 
 interface ColSection {
@@ -755,14 +758,17 @@ interface UniversityCardViewProps {
   card: LocalUniversityCard;
   isLocked: boolean;
   onDragStart: (e: React.DragEvent, cardId: string) => void;
+  onToggleCompleted: (cardId: string) => void;
 }
 
 function UniversityCardView({
   card,
   isLocked,
   onDragStart,
+  onToggleCompleted,
 }: UniversityCardViewProps) {
   const isAssignment = Boolean(card.assignmentTitle);
+  const isCompleted = Boolean(card.completed);
 
   return (
     <div
@@ -774,18 +780,62 @@ function UniversityCardView({
         padding: "12px",
         boxShadow: "var(--shadow-card)",
         cursor: isLocked ? "default" : "grab",
+        opacity: isCompleted ? 0.72 : 1,
+        transition: "opacity 0.2s",
       }}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <p
-            className="font-bold m-0"
-            style={{ fontSize: 14, color: "var(--text-primary)" }}
-          >
-            {isAssignment ? card.assignmentTitle : card.title}
-          </p>
+          <div className="flex items-start gap-2">
+            {/* Completed checkmark — only on assignment cards */}
+            {isAssignment && (
+              <button
+                type="button"
+                draggable={false}
+                onDragStart={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleCompleted(card.id);
+                }}
+                title={isCompleted ? "Mark as incomplete" : "Mark as complete"}
+                style={{
+                  background: "none",
+                  border: "none",
+                  padding: 0,
+                  cursor: "pointer",
+                  flexShrink: 0,
+                  marginTop: 1,
+                  color: isCompleted
+                    ? "rgba(29,185,84,0.9)"
+                    : "rgba(255,255,255,0.30)",
+                  transition: "color 0.15s",
+                }}
+              >
+                {isCompleted ? (
+                  <CheckCircle2 size={17} />
+                ) : (
+                  <Circle size={17} />
+                )}
+              </button>
+            )}
+            <p
+              className="font-bold m-0"
+              style={{
+                fontSize: 14,
+                color: "var(--text-primary)",
+                textDecoration: isCompleted ? "line-through" : "none",
+                opacity: isCompleted ? 0.65 : 1,
+              }}
+            >
+              {isAssignment ? card.assignmentTitle : card.title}
+            </p>
+          </div>
           {isAssignment ? (
-            <div className="flex flex-col gap-0.5 mt-1">
+            <div
+              className="flex flex-col gap-0.5 mt-1"
+              style={{ paddingLeft: isAssignment ? 25 : 0 }}
+            >
               {card.course && (
                 <div style={{ fontSize: 12, color: "rgba(255,255,255,0.75)" }}>
                   Course: {card.course}
@@ -797,8 +847,27 @@ function UniversityCardView({
                 </div>
               )}
               {card.dueDate && (
-                <div style={{ fontSize: 12, color: "rgba(255,200,80,0.85)" }}>
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: isCompleted
+                      ? "rgba(255,255,255,0.4)"
+                      : "rgba(255,200,80,0.85)",
+                  }}
+                >
                   Due: {card.dueDate}
+                </div>
+              )}
+              {isCompleted && (
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: "rgba(29,185,84,0.8)",
+                    fontWeight: 600,
+                    marginTop: 2,
+                  }}
+                >
+                  Completed
                 </div>
               )}
             </div>
@@ -1575,6 +1644,7 @@ interface SnhuBoardProps {
     card: Omit<LocalUniversityCard, "id" | "createdAt" | "col" | "createdBy">,
   ) => void;
   onDelete: (cardId: string) => void;
+  onToggleCompleted: (cardId: string) => void;
   selectedWeek: number | null;
   onSelectedWeekChange: (week: number | null) => void;
 }
@@ -1586,6 +1656,7 @@ function SnhuBoard({
   onAdd,
   onAddAssignment,
   onDelete,
+  onToggleCompleted,
   selectedWeek,
   onSelectedWeekChange,
 }: SnhuBoardProps) {
@@ -1648,6 +1719,7 @@ function SnhuBoard({
         card={card}
         isLocked={isLocked}
         onDragStart={onDragStart}
+        onToggleCompleted={onToggleCompleted}
       />
     ));
   }
@@ -1995,18 +2067,27 @@ export default function App() {
         }
 
         // Process university cards — decode all fields from backend
-        let uCards: LocalUniversityCard[] = rawUni.map((c) => ({
-          id: decodeId(c.id),
-          title: c.title,
-          term: c.term,
-          col: migrateSnhuCol(c.col),
-          createdBy: c.createdBy,
-          createdAt: c.createdAt,
-          assignmentTitle: c.assignmentTitle || undefined,
-          course: c.course || undefined,
-          dueDate: c.dueDate || undefined,
-          week: c.week && c.week !== "0" ? Number(c.week) : undefined,
-        }));
+        // week encoding: "N" = week N not completed, "N:done" = week N completed
+        let uCards: LocalUniversityCard[] = rawUni.map((c) => {
+          const weekRaw = c.week ?? "";
+          const isDone = weekRaw.endsWith(":done");
+          const weekNumStr = isDone ? weekRaw.slice(0, -5) : weekRaw;
+          const weekNum =
+            weekNumStr && weekNumStr !== "0" ? Number(weekNumStr) : undefined;
+          return {
+            id: decodeId(c.id),
+            title: c.title,
+            term: c.term,
+            col: migrateSnhuCol(c.col),
+            createdBy: c.createdBy,
+            createdAt: c.createdAt,
+            assignmentTitle: c.assignmentTitle || undefined,
+            course: c.course || undefined,
+            dueDate: c.dueDate || undefined,
+            week: weekNum,
+            completed: isDone,
+          };
+        });
 
         uCards = normalizeSnhuCards(uCards);
 
@@ -2022,7 +2103,12 @@ export default function App() {
             assignmentTitle: c.assignmentTitle ?? "",
             course: c.course ?? "",
             dueDate: c.dueDate ?? "",
-            week: c.week !== undefined ? String(c.week) : "0",
+            week:
+              c.week !== undefined
+                ? c.completed
+                  ? `${c.week}:done`
+                  : String(c.week)
+                : "0",
           })),
         );
 
@@ -2188,7 +2274,12 @@ export default function App() {
             assignmentTitle: c.assignmentTitle ?? "",
             course: c.course ?? "",
             dueDate: c.dueDate ?? "",
-            week: c.week !== undefined ? String(c.week) : "0",
+            week:
+              c.week !== undefined
+                ? c.completed
+                  ? `${c.week}:done`
+                  : String(c.week)
+                : "0",
           })),
         )
         .then(() => actor.setLastUpdated(encoded))
@@ -2267,18 +2358,26 @@ export default function App() {
       );
       const finalStaff = hasMiguel ? sCards : [miguelCard(), ...sCards];
 
-      let uCards: LocalUniversityCard[] = rawUni.map((c) => ({
-        id: decodeId(c.id),
-        title: c.title,
-        term: c.term,
-        col: migrateSnhuCol(c.col),
-        createdBy: c.createdBy,
-        createdAt: c.createdAt,
-        assignmentTitle: c.assignmentTitle || undefined,
-        course: c.course || undefined,
-        dueDate: c.dueDate || undefined,
-        week: c.week && c.week !== "0" ? Number(c.week) : undefined,
-      }));
+      let uCards: LocalUniversityCard[] = rawUni.map((c) => {
+        const weekRaw = c.week ?? "";
+        const isDone = weekRaw.endsWith(":done");
+        const weekNumStr = isDone ? weekRaw.slice(0, -5) : weekRaw;
+        const weekNum =
+          weekNumStr && weekNumStr !== "0" ? Number(weekNumStr) : undefined;
+        return {
+          id: decodeId(c.id),
+          title: c.title,
+          term: c.term,
+          col: migrateSnhuCol(c.col),
+          createdBy: c.createdBy,
+          createdAt: c.createdAt,
+          assignmentTitle: c.assignmentTitle || undefined,
+          course: c.course || undefined,
+          dueDate: c.dueDate || undefined,
+          week: weekNum,
+          completed: isDone,
+        };
+      });
       uCards = normalizeSnhuCards(uCards);
 
       setStaffingCards(finalStaff);
@@ -2374,12 +2473,22 @@ export default function App() {
   function handleUniversityAddAssignment(
     data: Omit<LocalUniversityCard, "id" | "createdAt" | "col" | "createdBy">,
   ) {
+    // Place the new assignment into the currently selected week's Not Started
+    // bucket. If no week is selected, default to week 1.
+    const targetWeek = selectedWeek ?? 1;
+    // Also auto-select week 1 in the UI if nothing was selected
+    if (selectedWeek === null) {
+      setSelectedWeek(1);
+      selectedWeekRef.current = 1;
+      saveUIState(selectedSectionRef.current, 1);
+    }
     const newCard: LocalUniversityCard = {
       ...data,
       id: `assign-${uid()}`,
-      col: "ca_general",
+      col: weekNotStartedKey(targetWeek),
       createdBy: LOGIN_NAME,
       createdAt: new Date().toISOString(),
+      completed: false,
     };
     const next = [...universityCards, newCard];
     setUniversityCards(next);
@@ -2391,6 +2500,14 @@ export default function App() {
     const next = universityCards.filter((c) => c.id !== cardId);
     setUniversityCards(next);
     toast.success("Course deleted.");
+    saveUniversity(next);
+  }
+
+  function handleUniversityToggleCompleted(cardId: string) {
+    const next = universityCards.map((c) =>
+      c.id === cardId ? { ...c, completed: !c.completed } : c,
+    );
+    setUniversityCards(next);
     saveUniversity(next);
   }
 
@@ -2490,6 +2607,7 @@ export default function App() {
               onAdd={handleUniversityAdd}
               onAddAssignment={handleUniversityAddAssignment}
               onDelete={handleUniversityDelete}
+              onToggleCompleted={handleUniversityToggleCompleted}
               selectedWeek={selectedWeek}
               onSelectedWeekChange={handleSelectedWeekChange}
             />
